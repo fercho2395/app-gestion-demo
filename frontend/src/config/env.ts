@@ -3,6 +3,7 @@ type RuntimeConfig = {
   VITE_AZURE_TENANT_ID?: string;
   VITE_AZURE_CLIENT_ID?: string;
   VITE_AZURE_REDIRECT_URI?: string;
+  VITE_AZURE_API_SCOPE?: string;
 };
 
 declare global {
@@ -20,4 +21,5 @@ export const env = {
   azureClientId: runtimeConfig.VITE_AZURE_CLIENT_ID || import.meta.env.VITE_AZURE_CLIENT_ID || "",
   azureRedirectUri:
     runtimeConfig.VITE_AZURE_REDIRECT_URI || import.meta.env.VITE_AZURE_REDIRECT_URI || window.location.origin,
+  azureApiScope: runtimeConfig.VITE_AZURE_API_SCOPE || import.meta.env.VITE_AZURE_API_SCOPE || "",
 };

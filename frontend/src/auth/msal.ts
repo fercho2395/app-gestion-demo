@@ -13,7 +13,11 @@ const msalConfig: Configuration = {
 };
 
 export const loginRequest = {
-  scopes: ["openid", "profile", "email", env.azureClientId ? `api://${env.azureClientId}/.default` : "User.Read"],
+  scopes: ["openid", "profile", "email"],
+};
+
+export const apiTokenRequest = {
+  scopes: [env.azureApiScope || "User.Read"],
 };
 
 export const msalInstance = new PublicClientApplication(msalConfig);

@@ -61,6 +61,12 @@ function renderEnvScript() {
       'ENTRA_REDIRECT_URI',
       'AAD_REDIRECT_URI'
     ),
+    VITE_AZURE_API_SCOPE: pickFirstEnv(
+      'VITE_AZURE_API_SCOPE',
+      'AZURE_API_SCOPE',
+      'ENTRA_API_SCOPE',
+      'AAD_API_SCOPE'
+    ),
   };
 
   return `window.__APP_CONFIG__ = ${JSON.stringify(config)};`;

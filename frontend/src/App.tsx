@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { env } from "./config/env";
-import { loginRequest } from "./auth/msal";
+import { apiTokenRequest, loginRequest } from "./auth/msal";
 import {
   approveTimeEntry,
   createAdminUser,
@@ -64,15 +64,17 @@ function numberish(value: string | null | undefined) {
 }
 
 async function getAccessToken(instance: ReturnType<typeof useMsal>["instance"], account: ReturnType<typeof useMsal>["accounts"][number]) {
+  const preferAccessToken = Boolean(env.azureApiScope);
+
   try {
     const result = await instance.acquireTokenSilent({
-      ...loginRequest,
+      ...apiTokenRequest,
       account,
     });
-    return result.accessToken;
+    return preferAccessToken ? result.accessToken || result.idToken : result.idToken || result.accessToken;
   } catch {
-    const result = await instance.acquireTokenPopup(loginRequest);
-    return result.accessToken;
+    const result = await instance.acquireTokenPopup(apiTokenRequest);
+    return preferAccessToken ? result.accessToken || result.idToken : result.idToken || result.accessToken;
   }
 }
 
