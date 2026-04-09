@@ -213,6 +213,7 @@ function App() {
       setAuthUser(me);
       await loadDomainData(me);
     } catch (bootstrapError) {
+      setAuthUser(null);
       setError(bootstrapError instanceof Error ? bootstrapError.message : "Error inicializando la aplicación");
     } finally {
       setLoading(false);
@@ -354,16 +355,37 @@ function App() {
     }
   }
 
-  if (microsoftConfigured && !isAuthenticated) {
+  if (!authUser) {
+    if (loading) {
+      return (
+        <main className="shell auth-shell">
+          <section className="auth-card">
+            <div className="logo-slot">Logo Empresa</div>
+            <h1>App Gestion Demo</h1>
+            <p>Inicializando sesión...</p>
+          </section>
+        </main>
+      );
+    }
+
     return (
       <main className="shell auth-shell">
         <section className="auth-card">
           <div className="logo-slot">Logo Empresa</div>
           <h1>App Gestion Demo</h1>
-          <p>Ingresa con Microsoft para continuar.</p>
-          <button type="button" onClick={() => void loginWithMicrosoft()}>
-            Iniciar sesión con Microsoft
-          </button>
+          {microsoftConfigured ? (
+            <>
+              <p>Ingresa con Microsoft para continuar.</p>
+              <button type="button" onClick={() => void loginWithMicrosoft()}>
+                Iniciar sesión con Microsoft
+              </button>
+            </>
+          ) : (
+            <p>
+              Falta configurar autenticación Microsoft en frontend (VITE_AZURE_TENANT_ID y
+              VITE_AZURE_CLIENT_ID).
+            </p>
+          )}
         </section>
       </main>
     );
@@ -381,7 +403,7 @@ function App() {
         </div>
         <div className="badges">
           <span className={`pill ${health?.ok ? "ok" : "error"}`}>{health?.ok ? "Backend activo" : "Backend no disponible"}</span>
-          <span className="pill neutral">{authUser ? `${authUser.displayName} (${authUser.roles.join(", ")})` : "Sin usuario"}</span>
+          <span className="pill neutral">{`${authUser.displayName} (${authUser.roles.join(", ")})`}</span>
           <button type="button" className="ghost" onClick={() => void logout()}>
             Cerrar sesión
           </button>
