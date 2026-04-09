@@ -346,7 +346,7 @@ function App() {
   }
 
   async function loginWithMicrosoft() {
-    await instance.loginPopup(loginRequest);
+    await instance.loginRedirect(loginRequest);
   }
 
   async function logout() {
