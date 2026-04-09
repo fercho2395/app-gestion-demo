@@ -28,7 +28,10 @@
    - `CORS_ORIGIN=https://<frontend-domain>`
    - `DATABASE_URL=<railway-postgres-url>`
 
-`railway:start` generates Prisma client and applies schema with `prisma db push` before starting the API.
+`railway:start` starts only the API process for a fast and reliable healthcheck.
+
+If you need to apply migrations in Railway, run:
+- `npm run railway:migrate`
 
 ## Notes
 - The repository deploys backend from root using `railway.toml` + `Dockerfile`.
