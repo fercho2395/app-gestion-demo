@@ -209,8 +209,14 @@ export async function updateAdminUser(
   return response.data;
 }
 
-export async function listProjects(): Promise<Project[]> {
-  const response = await request<ApiEnvelope<Project[]>>("/api/projects");
+export async function listProjects(params?: { search?: string }): Promise<Project[]> {
+  const query = new URLSearchParams();
+  if (params?.search) {
+    query.set("search", params.search);
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<Project[]>>(`/api/projects${suffix}`);
   return response.data;
 }
 
@@ -228,6 +234,27 @@ export async function createProject(payload: {
   return response.data;
 }
 
+export async function updateProject(
+  id: string,
+  payload: {
+    name: string;
+    company: string;
+    country: string;
+    currency: string;
+    budget: number;
+    startDate: string;
+    endDate: string;
+    description?: string;
+  },
+): Promise<Project> {
+  const response = await request<ApiEnvelope<Project>>(`/api/projects/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await request<void>(`/api/projects/${id}`, "DELETE");
+}
+
 export async function listConsultants(): Promise<Consultant[]> {
   const response = await request<ApiEnvelope<Consultant[]>>("/api/consultants");
   return response.data;
@@ -242,6 +269,24 @@ export async function createConsultant(payload: {
 }): Promise<Consultant> {
   const response = await request<ApiEnvelope<Consultant>>("/api/consultants", "POST", payload);
   return response.data;
+}
+
+export async function updateConsultant(
+  id: string,
+  payload: {
+    fullName: string;
+    email?: string;
+    role: string;
+    hourlyRate?: number;
+    active: boolean;
+  },
+): Promise<Consultant> {
+  const response = await request<ApiEnvelope<Consultant>>(`/api/consultants/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function deleteConsultant(id: string): Promise<void> {
+  await request<void>(`/api/consultants/${id}`, "DELETE");
 }
 
 export async function listTimeEntries(): Promise<TimeEntry[]> {
@@ -292,6 +337,25 @@ export async function createExpense(payload: {
   return response.data;
 }
 
+export async function updateExpense(
+  id: string,
+  payload: {
+    projectId: string;
+    expenseDate: string;
+    category: string;
+    amount: number;
+    currency: string;
+    description?: string;
+  },
+): Promise<Expense> {
+  const response = await request<ApiEnvelope<Expense>>(`/api/expenses/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function deleteExpense(id: string): Promise<void> {
+  await request<void>(`/api/expenses/${id}`, "DELETE");
+}
+
 export async function listForecasts(): Promise<Forecast[]> {
   const response = await request<ApiEnvelope<Forecast[]>>("/api/forecasts");
   return response.data;
@@ -307,6 +371,25 @@ export async function createForecast(payload: {
 }): Promise<Forecast> {
   const response = await request<ApiEnvelope<Forecast>>("/api/forecasts", "POST", payload);
   return response.data;
+}
+
+export async function updateForecast(
+  id: string,
+  payload: {
+    projectId: string;
+    consultantId: string;
+    period: string;
+    hoursProjected: number;
+    hourlyRate?: number;
+    note?: string;
+  },
+): Promise<Forecast> {
+  const response = await request<ApiEnvelope<Forecast>>(`/api/forecasts/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function deleteForecast(id: string): Promise<void> {
+  await request<void>(`/api/forecasts/${id}`, "DELETE");
 }
 
 export async function getStatsOverview(): Promise<StatsOverview> {

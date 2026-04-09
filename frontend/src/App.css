@@ -145,6 +145,10 @@
   gap: 0.7rem;
 }
 
+.filters-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .form-grid > * {
   min-width: 0;
 }
@@ -270,9 +274,20 @@ th {
   color: #991b1b;
 }
 
+.pill.warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .pill.neutral {
   background: #fff3e8;
   color: #9a3412;
+}
+
+.tag-list {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 1100px) {
@@ -285,6 +300,10 @@ th {
   }
 
   .two-col {
+    grid-template-columns: 1fr;
+  }
+
+  .filters-grid {
     grid-template-columns: 1fr;
   }
 }
