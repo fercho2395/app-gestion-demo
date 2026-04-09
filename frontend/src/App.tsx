@@ -412,12 +412,31 @@ function App() {
         <section className="auth-card">
           <div className="logo-slot">Logo Empresa</div>
           <h1>App Gestion Demo</h1>
+          {error && <p className="error-banner">{error}</p>}
           {microsoftConfigured ? (
             <>
-              <p>Ingresa con Microsoft para continuar.</p>
-              <button type="button" onClick={() => void loginWithMicrosoft()}>
-                Iniciar sesión con Microsoft
-              </button>
+              {isAuthenticated ? (
+                <>
+                  <p>
+                    Tu sesión Microsoft está activa, pero no fue posible validar permisos en la app.
+                  </p>
+                  <div className="inline-actions">
+                    <button type="button" onClick={() => void bootstrap()}>
+                      Reintentar
+                    </button>
+                    <button type="button" className="ghost" onClick={() => void logout()}>
+                      Cerrar sesión Microsoft
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p>Ingresa con Microsoft para continuar.</p>
+                  <button type="button" onClick={() => void loginWithMicrosoft()}>
+                    Iniciar sesión con Microsoft
+                  </button>
+                </>
+              )}
             </>
           ) : (
             <p>

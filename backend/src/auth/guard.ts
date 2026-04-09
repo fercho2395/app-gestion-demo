@@ -78,11 +78,24 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
     },
   });
 
-  if (!user || !user.active) {
-    return reply.status(403).send({ message: "User not authorized" });
+  if (!user) {
+    return reply.status(403).send({
+      message: "Tu usuario no existe en la aplicacion. Solicita acceso a un administrador.",
+    });
+  }
+
+  if (!user.active) {
+    return reply.status(403).send({
+      message: "Tu usuario esta inactivo. Contacta a un administrador.",
+    });
   }
 
   const roles = user.roles.map((item) => item.role.name);
+  if (roles.length === 0) {
+    return reply.status(403).send({
+      message: "Tu usuario no tiene roles asignados. Contacta a un administrador.",
+    });
+  }
 
   request.authUser = {
     id: user.id,
