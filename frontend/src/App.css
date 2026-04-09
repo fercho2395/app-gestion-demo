@@ -1,0 +1,77 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.app-card {
+  width: min(760px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.subtitle {
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.label {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.pill {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.pill.ok {
+  color: #0a7f3f;
+  background: #e9f9f0;
+}
+
+.pill.pending {
+  color: #8a6500;
+  background: #fff8e1;
+}
+
+.pill.error {
+  color: #a80000;
+  background: #ffe9e9;
+}
+
+.details {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 14px 0;
+}
+
+.details div + div {
+  margin-top: 8px;
+}
+
+.error-text {
+  color: #a80000;
+  margin-top: 8px;
+}
+
+.hint {
+  margin-top: 20px;
+  font-size: 14px;
+}

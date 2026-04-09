@@ -1,0 +1,1888 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sistema de Seguimiento de Proyectos</title>
+
+    <!-- Tailwind (prototipo) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React 18 + ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Babel para JSX (prototipo) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Lucide (no React) -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  </head>
+
+  <body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useEffect, useMemo, useState } = React;
+
+      const STORAGE_KEY = "project_tracking_v3_fx";
+
+      const uid = () =>
+        (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : String(Date.now() + Math.random());
+
+      const toNum = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      function Icon({ name, size = 20, className = "" }) {
+        return (
+          <i
+            data-lucide={name}
+            className={className}
+            style={{ width: size, height: size }}
+          ></i>
+        );
+      }
+
+      function Toast({ toast, onClose }) {
+        useEffect(() => {
+          if (!toast) return;
+          const t = setTimeout(onClose, 2800);
+          return () => clearTimeout(t);
+        }, [toast, onClose]);
+
+        if (!toast) return null;
+
+        return (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60]">
+            <div
+              className={`px-4 py-3 rounded-lg shadow-lg text-sm font-semibold ${
+                toast.type === "error"
+                  ? "bg-red-600 text-white"
+                  : "bg-gray-900 text-white"
+              }`}
+            >
+              {toast.message}
+            </div>
+          </div>
+        );
+      }
+
+      function Badge({ children, tone = "gray" }) {
+        const map = {
+          gray: "bg-gray-100 text-gray-800",
+          green: "bg-green-100 text-green-800",
+          red: "bg-red-100 text-red-800",
+          yellow: "bg-yellow-100 text-yellow-800",
+          blue: "bg-blue-100 text-blue-800",
+          purple: "bg-purple-100 text-purple-800",
+        };
+        return (
+          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${map[tone] || map.gray}`}>
+            {children}
+          </span>
+        );
+      }
+
+      function App() {
+        const [activeTab, setActiveTab] = useState("proyectos");
+        const [userRole, setUserRole] = useState("admin");
+
+        const [state, setState] = useState(() => {
+          try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            return raw
+              ? JSON.parse(raw)
+              : {
+                  proyectos: [],
+                  consultores: [],
+                  horas: [],
+                  gastos: [],
+                  proyecciones: [],
+                  fx: { monedaA: "USD", monedaB: "COP", trm: "4000" }, // A -> B
+                };
+          } catch {
+            return {
+              proyectos: [],
+              consultores: [],
+              horas: [],
+              gastos: [],
+              proyecciones: [],
+              fx: { monedaA: "USD", monedaB: "COP", trm: "4000" },
+            };
+          }
+        });
+
+        const { proyectos, consultores, horas, gastos, proyecciones, fx } = state;
+
+        const [showModal, setShowModal] = useState(false);
+        const [modalType, setModalType] = useState("");
+        const [editingId, setEditingId] = useState(null);
+        const [formData, setFormData] = useState({});
+        const [toast, setToast] = useState(null);
+
+        const [statsFilters, setStatsFilters] = useState({
+          empresa: "",
+          proyectoId: "",
+          desde: "",
+          hasta: "",
+        });
+
+        const monedas = ["USD", "EUR", "COP", "MXN", "ARS", "CLP", "PEN"];
+        const catalogoGastos = [
+          "Viajes",
+          "Alimentación",
+          "Transporte",
+          "Viáticos",
+          "Hospedaje",
+          "Material",
+          "Consultoría",
+          "Otro",
+        ];
+        const roles = [
+          "Developer",
+          "Senior Developer",
+          "Tech Lead",
+          "Project Manager",
+          "QA Engineer",
+          "Designer",
+          "DevOps",
+          "Arquitecto",
+        ];
+
+        useEffect(() => {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        }, [state]);
+
+        useEffect(() => {
+          if (window.lucide) window.lucide.createIcons();
+        });
+
+        const notify = (message, type = "ok") => setToast({ message, type });
+
+        const getProyecto = (id) => proyectos.find((p) => p.id === id) || null;
+        const getProyectoName = (id) => getProyecto(id)?.nombre ?? "—";
+        const getProyectoEmpresa = (id) => getProyecto(id)?.empresa ?? "—";
+        const getProyectoMoneda = (id) => getProyecto(id)?.moneda ?? "";
+
+        // ---------------- FX (DOBLE MONEDA CON TRM) ----------------
+        const fxRate = Math.max(0, toNum(fx?.trm || 0)); // A -> B
+
+        const formatMoney = (amount) => toNum(amount).toLocaleString();
+
+        // Devuelve: { aText, bText, note } con conversión basada en TRM A->B
+        const dualMoney = (amount, monedaOriginal) => {
+          const a = fx?.monedaA || "USD";
+          const b = fx?.monedaB || "COP";
+          const amt = toNum(amount);
+
+          // Si no hay TRM, solo muestra original
+          if (!fxRate || fxRate <= 0) {
+            return {
+              primary: `${monedaOriginal} ${formatMoney(amt)}`,
+              secondary: "TRM no definida",
+              secondaryMuted: true,
+            };
+          }
+
+          // Si original es A, convierto a B
+          if (monedaOriginal === a) {
+            const conv = amt * fxRate;
+            return {
+              primary: `${a} ${formatMoney(amt)}`,
+              secondary: `${b} ${formatMoney(conv)}`,
+              secondaryMuted: false,
+            };
+          }
+
+          // Si original es B, convierto a A
+          if (monedaOriginal === b) {
+            const conv = amt / fxRate;
+            return {
+              primary: `${b} ${formatMoney(amt)}`,
+              secondary: `${a} ${formatMoney(conv)}`,
+              secondaryMuted: false,
+            };
+          }
+
+          // Si original es otra, muestro original y aviso
+          return {
+            primary: `${monedaOriginal} ${formatMoney(amt)}`,
+            secondary: `No convertible (${a}↔${b})`,
+            secondaryMuted: true,
+          };
+        };
+
+        const MoneyDual = ({ amount, currency, className = "" }) => {
+          const d = dualMoney(amount, currency);
+          return (
+            <div className={`leading-tight ${className}`}>
+              <div className="font-semibold">{d.primary}</div>
+              <div className={`text-xs ${d.secondaryMuted ? "text-gray-400" : "text-gray-600"}`}>
+                {d.secondary}
+              </div>
+            </div>
+          );
+        };
+
+        // ---------------- METRICAS DERIVADAS ----------------
+        const proyectoStats = useMemo(() => {
+          const stats = new Map();
+          for (const p of proyectos) stats.set(p.id, { horasAprobadas: 0, gastoTotal: 0 });
+          for (const h of horas) {
+            if (h.estado === "Aprobado" && stats.has(h.proyectoId)) {
+              stats.get(h.proyectoId).horasAprobadas += toNum(h.horas);
+            }
+          }
+          for (const g of gastos) {
+            if (stats.has(g.proyectoId)) {
+              stats.get(g.proyectoId).gastoTotal += toNum(g.valor);
+            }
+          }
+          return stats;
+        }, [proyectos, horas, gastos]);
+
+        const calcularPresupuestoDisponible = (proyecto) => {
+          const presupuesto = toNum(proyecto.presupuesto);
+          const usado = proyectoStats.get(proyecto.id)?.gastoTotal ?? 0;
+          return presupuesto - usado;
+        };
+
+        const calcularPorcentajeUsado = (proyecto) => {
+          const presupuesto = toNum(proyecto.presupuesto);
+          const usado = proyectoStats.get(proyecto.id)?.gastoTotal ?? 0;
+          return presupuesto > 0 ? ((usado / presupuesto) * 100).toFixed(1) : "0.0";
+        };
+
+        // ---------------- FECHAS ----------------
+        const isWithinRange = (dateStr, desde, hasta) => {
+          if (!dateStr) return false;
+          if (desde && dateStr < desde) return false;
+          if (hasta && dateStr > hasta) return false;
+          return true;
+        };
+
+        // ---------------- CRUD ----------------
+        const openModal = (type, item = null) => {
+          setModalType(type);
+          setEditingId(item?.id ?? null);
+          if (item) setFormData({ ...item });
+          else {
+            if (type === "proyecto") setFormData({ moneda: "USD" });
+            else setFormData({});
+          }
+          setShowModal(true);
+        };
+
+        const closeModal = () => {
+          setShowModal(false);
+          setModalType("");
+          setEditingId(null);
+          setFormData({});
+        };
+
+        const upsertProyecto = (data, id) => {
+          if (!data.nombre?.trim()) throw new Error("Nombre de proyecto requerido.");
+          if (!data.empresa?.trim()) throw new Error("Empresa requerida.");
+          if (!data.pais?.trim()) throw new Error("País requerido.");
+          if (!data.moneda) throw new Error("Selecciona moneda.");
+          if (toNum(data.presupuesto) < 0) throw new Error("Presupuesto no puede ser negativo.");
+          if (!data.fechaInicio) throw new Error("Fecha inicio requerida.");
+          if (!data.fechaFin) throw new Error("Fecha fin requerida.");
+          if (data.fechaFin < data.fechaInicio) throw new Error("La fecha fin no puede ser menor que la fecha inicio.");
+
+          setState((s) => {
+            if (id) {
+              return {
+                ...s,
+                proyectos: s.proyectos.map((p) => (p.id === id ? { ...p, ...data, id } : p)),
+              };
+            }
+            return { ...s, proyectos: [...s.proyectos, { ...data, id: uid() }] };
+          });
+        };
+
+        const upsertConsultor = (data, id) => {
+          if (!data.nombre?.trim()) throw new Error("Nombre requerido.");
+          if (!data.identificacion?.trim()) throw new Error("Identificación requerida.");
+          if (!data.correo?.trim()) throw new Error("Correo requerido.");
+          if (!data.rol) throw new Error("Selecciona un rol.");
+
+          setState((s) => {
+            if (id) {
+              return {
+                ...s,
+                consultores: s.consultores.map((c) => (c.id === id ? { ...c, ...data, id } : c)),
+              };
+            }
+            return { ...s, consultores: [...s.consultores, { ...data, id: uid() }] };
+          });
+        };
+
+        const addHoras = (data) => {
+          if (!proyectos.length) throw new Error("Crea un proyecto antes de registrar horas.");
+          if (!data.consultor?.trim()) throw new Error("Nombre del consultor requerido.");
+          if (!data.proyectoId) throw new Error("Selecciona un proyecto.");
+          if (!data.rol) throw new Error("Selecciona un rol.");
+          if (!data.tarea?.trim()) throw new Error("Describe la tarea.");
+          if (toNum(data.horas) <= 0) throw new Error("Horas debe ser mayor a 0.");
+
+          setState((s) => ({
+            ...s,
+            horas: [
+              ...s.horas,
+              { id: uid(), ...data, fecha: new Date().toISOString().slice(0, 10), estado: "Pendiente" },
+            ],
+          }));
+        };
+
+        const upsertGasto = (data, id) => {
+          if (!proyectos.length) throw new Error("Crea un proyecto antes de registrar gastos.");
+          if (!data.proyectoId) throw new Error("Selecciona un proyecto.");
+          if (!data.tipoGasto) throw new Error("Selecciona tipo de gasto.");
+          if (!data.descripcion?.trim()) throw new Error("Descripción requerida.");
+          if (toNum(data.valor) <= 0) throw new Error("Valor debe ser mayor a 0.");
+          if (!data.esVariable) throw new Error("Selecciona clasificación.");
+
+          setState((s) => {
+            if (id) {
+              return { ...s, gastos: s.gastos.map((g) => (g.id === id ? { ...g, ...data, id } : g)) };
+            }
+            return { ...s, gastos: [...s.gastos, { id: uid(), ...data }] };
+          });
+        };
+
+        const upsertProyeccion = (data, id) => {
+          if (!data.proyectoId) throw new Error("Selecciona un proyecto.");
+          if (!data.consultor?.trim()) throw new Error("Nombre del consultor requerido.");
+          if (!data.rol) throw new Error("Selecciona un rol.");
+          if (toNum(data.horasProyectadas) <= 0) throw new Error("Horas proyectadas debe ser > 0.");
+          if (!data.fechaInicio) throw new Error("Fecha inicio requerida.");
+          if (!data.fechaFin) throw new Error("Fecha fin requerida.");
+          if (data.fechaFin < data.fechaInicio) throw new Error("La fecha fin no puede ser menor que la fecha inicio.");
+          if (data.tarifaHora && toNum(data.tarifaHora) < 0) throw new Error("Tarifa hora no puede ser negativa.");
+
+          setState((s) => {
+            if (id) return { ...s, proyecciones: s.proyecciones.map((x) => (x.id === id ? { ...x, ...data, id } : x)) };
+            return { ...s, proyecciones: [...s.proyecciones, { id: uid(), ...data }] };
+          });
+        };
+
+        const aprobarHoras = (id) => {
+          setState((s) => ({
+            ...s,
+            horas: s.horas.map((h) => (h.id === id ? { ...h, estado: "Aprobado" } : h)),
+          }));
+        };
+
+        const rechazarHoras = (id) => {
+          setState((s) => ({
+            ...s,
+            horas: s.horas.map((h) => (h.id === id ? { ...h, estado: "Rechazado" } : h)),
+          }));
+        };
+
+        const deleteItem = (type, id) => {
+          setState((s) => {
+            if (type === "proyecto") {
+              return {
+                ...s,
+                proyectos: s.proyectos.filter((p) => p.id !== id),
+                horas: s.horas.filter((h) => h.proyectoId !== id),
+                gastos: s.gastos.filter((g) => g.proyectoId !== id),
+                proyecciones: s.proyecciones.filter((x) => x.proyectoId !== id),
+              };
+            }
+            if (type === "consultor") return { ...s, consultores: s.consultores.filter((c) => c.id !== id) };
+            if (type === "horas") return { ...s, horas: s.horas.filter((h) => h.id !== id) };
+            if (type === "gasto") return { ...s, gastos: s.gastos.filter((g) => g.id !== id) };
+            if (type === "proyeccion") return { ...s, proyecciones: s.proyecciones.filter((x) => x.id !== id) };
+            return s;
+          });
+        };
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          try {
+            if (modalType === "proyecto") {
+              upsertProyecto(formData, editingId);
+              notify(editingId ? "Proyecto actualizado." : "Proyecto creado.");
+            } else if (modalType === "consultor") {
+              upsertConsultor(formData, editingId);
+              notify(editingId ? "Consultor actualizado." : "Consultor creado.");
+            } else if (modalType === "horas") {
+              addHoras(formData);
+              notify("Horas registradas (Pendiente).");
+            } else if (modalType === "gasto") {
+              upsertGasto(formData, editingId);
+              notify(editingId ? "Gasto actualizado." : "Gasto registrado.");
+            } else if (modalType === "proyeccion") {
+              upsertProyeccion(formData, editingId);
+              notify(editingId ? "Proyección actualizada." : "Proyección creada.");
+            }
+            closeModal();
+          } catch (err) {
+            notify(err.message || "Error", "error");
+          }
+        };
+
+        // ---------------- ESTADÍSTICAS ----------------
+        const empresas = useMemo(() => {
+          const set = new Set(proyectos.map((p) => p.empresa).filter(Boolean));
+          return Array.from(set).sort();
+        }, [proyectos]);
+
+        const proyectosFiltrables = useMemo(() => {
+          if (!statsFilters.empresa) return proyectos;
+          return proyectos.filter((p) => p.empresa === statsFilters.empresa);
+        }, [proyectos, statsFilters.empresa]);
+
+        const horasFiltradas = useMemo(() => {
+          return horas.filter((h) => {
+            const p = getProyecto(h.proyectoId);
+            if (!p) return false;
+            if (statsFilters.empresa && p.empresa !== statsFilters.empresa) return false;
+            if (statsFilters.proyectoId && h.proyectoId !== statsFilters.proyectoId) return false;
+            if (statsFilters.desde || statsFilters.hasta) {
+              return isWithinRange(h.fecha, statsFilters.desde, statsFilters.hasta);
+            }
+            return true;
+          });
+        }, [horas, statsFilters, proyectos]);
+
+        const horasAprobadasFiltradas = useMemo(
+          () => horasFiltradas.filter((h) => h.estado === "Aprobado"),
+          [horasFiltradas]
+        );
+
+        const gastosFiltrados = useMemo(() => {
+          return gastos.filter((g) => {
+            const p = getProyecto(g.proyectoId);
+            if (!p) return false;
+            if (statsFilters.empresa && p.empresa !== statsFilters.empresa) return false;
+            if (statsFilters.proyectoId && g.proyectoId !== statsFilters.proyectoId) return false;
+            return true;
+          });
+        }, [gastos, statsFilters, proyectos]);
+
+        const proyeccionesFiltradas = useMemo(() => {
+          return proyecciones.filter((x) => {
+            const p = getProyecto(x.proyectoId);
+            if (!p) return false;
+            if (statsFilters.empresa && p.empresa !== statsFilters.empresa) return false;
+            if (statsFilters.proyectoId && x.proyectoId !== statsFilters.proyectoId) return false;
+
+            if (statsFilters.desde || statsFilters.hasta) {
+              const desde = statsFilters.desde || "0000-01-01";
+              const hasta = statsFilters.hasta || "9999-12-31";
+              return !(x.fechaFin < desde || x.fechaInicio > hasta);
+            }
+            return true;
+          });
+        }, [proyecciones, statsFilters, proyectos]);
+
+        const horasPorConsultor = useMemo(() => {
+          const map = new Map();
+          for (const h of horasAprobadasFiltradas) {
+            const key = (h.consultor || "—").trim();
+            if (!map.has(key)) map.set(key, { total: 0, proyectos: new Map() });
+            const node = map.get(key);
+            const hrs = toNum(h.horas);
+            node.total += hrs;
+            node.proyectos.set(h.proyectoId, (node.proyectos.get(h.proyectoId) || 0) + hrs);
+          }
+          const rows = Array.from(map.entries()).map(([consultor, v]) => ({
+            consultor,
+            total: v.total,
+            byProject: v.proyectos,
+          }));
+          rows.sort((a, b) => b.total - a.total);
+          return rows;
+        }, [horasAprobadasFiltradas]);
+
+        const resumenPorProyecto = useMemo(() => {
+          const list = [];
+          for (const p of proyectosFiltrables) {
+            if (statsFilters.proyectoId && p.id !== statsFilters.proyectoId) continue;
+
+            const used = proyectoStats.get(p.id)?.gastoTotal ?? 0;
+            const budget = toNum(p.presupuesto);
+            const available = budget - used;
+
+            // Proyección: horasProyectadas * tarifaHora (si está)
+            const projItems = proyeccionesFiltradas.filter((x) => x.proyectoId === p.id);
+            const projectedCost = projItems.reduce(
+              (acc, x) => acc + toNum(x.horasProyectadas) * toNum(x.tarifaHora),
+              0
+            );
+
+            const projectedTotal = used + projectedCost;
+            const projectedPct = budget > 0 ? (projectedTotal / budget) * 100 : 0;
+
+            list.push({
+              proyecto: p,
+              usado: used,
+              presupuesto: budget,
+              disponible: available,
+              projectedCost,
+              projectedTotal,
+              projectedPct,
+              hasProjectionPricing: projectedCost > 0,
+            });
+          }
+          list.sort((a, b) => b.projectedPct - a.projectedPct);
+          return list;
+        }, [proyectosFiltrables, statsFilters.proyectoId, proyectoStats, proyeccionesFiltradas]);
+
+        const proyeccionHorasPorConsultor = useMemo(() => {
+          const map = new Map();
+          for (const x of proyeccionesFiltradas) {
+            const name = (x.consultor || "—").trim();
+            if (!map.has(name)) map.set(name, { totalHoras: 0, items: [] });
+            const node = map.get(name);
+            const hrs = toNum(x.horasProyectadas);
+            node.totalHoras += hrs;
+            node.items.push(x);
+          }
+          const rows = Array.from(map.entries()).map(([consultor, v]) => ({
+            consultor,
+            totalHoras: v.totalHoras,
+            items: v.items.sort((a, b) => (a.fechaInicio || "").localeCompare(b.fechaInicio || "")),
+          }));
+          rows.sort((a, b) => b.totalHoras - a.totalHoras);
+          return rows;
+        }, [proyeccionesFiltradas]);
+
+        return (
+          <div className="min-h-screen bg-gray-50">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg">
+              <div className="max-w-7xl mx-auto px-4 py-6">
+                <h1 className="text-3xl font-bold flex items-center gap-3">
+                  <Icon name="file-text" size={34} className="text-white" />
+                  Sistema de Seguimiento de Proyectos
+                </h1>
+                <p className="mt-2 text-blue-100">
+                  Ahora con doble moneda: porque una sola ya no alcanza para sufrir.
+                </p>
+              </div>
+            </div>
+
+            {/* Barra superior: rol + FX */}
+            <div className="max-w-7xl mx-auto px-4 py-4 bg-white border-b">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+                <div className="flex items-center gap-4">
+                  <label className="font-semibold text-gray-700">Vista actual:</label>
+                  <select
+                    value={userRole}
+                    onChange={(e) => setUserRole(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="colaborador">Colaborador</option>
+                    <option value="lider">Líder de Área</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </div>
+
+                {/* FX Controls */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icon name="repeat" size={16} />
+                    <span className="text-sm font-semibold text-gray-800">Doble moneda (TRM)</span>
+                    <span className="text-xs text-gray-500">A → B</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Moneda A</label>
+                      <select
+                        value={fx.monedaA}
+                        onChange={(e) =>
+                          setState((s) => ({ ...s, fx: { ...s.fx, monedaA: e.target.value } }))
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                      >
+                        {monedas.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Moneda B</label>
+                      <select
+                        value={fx.monedaB}
+                        onChange={(e) =>
+                          setState((s) => ({ ...s, fx: { ...s.fx, monedaB: e.target.value } }))
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                      >
+                        {monedas.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        TRM ({fx.monedaA}→{fx.monedaB})
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.0001"
+                        value={fx.trm}
+                        onChange={(e) =>
+                          setState((s) => ({ ...s, fx: { ...s.fx, trm: e.target.value } }))
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        placeholder="Ej: 4000"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 text-xs text-gray-500">
+                    Se convierte solo cuando el valor está en <span className="font-semibold">{fx.monedaA}</span> o{" "}
+                    <span className="font-semibold">{fx.monedaB}</span>.
+                  </div>
+                </div>
+
+                <div className="flex lg:justify-end">
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem(STORAGE_KEY);
+                      setState({
+                        proyectos: [],
+                        consultores: [],
+                        horas: [],
+                        gastos: [],
+                        proyecciones: [],
+                        fx: { monedaA: "USD", monedaB: "COP", trm: "4000" },
+                      });
+                      notify("Datos limpiados.");
+                    }}
+                    className="text-sm px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700"
+                    title="Borra datos guardados en este navegador"
+                  >
+                    Limpiar datos
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="max-w-7xl mx-auto px-4 py-6">
+              <div className="flex gap-2 mb-6 bg-white p-2 rounded-lg shadow flex-wrap">
+                {[
+                  ["proyectos", "file-text", "Proyectos"],
+                  ["horas", "clock", "Bolsa de Horas"],
+                  ["staffing", "users", "Staffing"],
+                  ["estadisticas", "bar-chart-3", "Estadísticas"],
+                ].map(([key, icon, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setActiveTab(key)}
+                    className={`flex-1 min-w-[180px] py-3 px-4 rounded-md font-semibold transition-all flex items-center justify-center gap-2 ${
+                      activeTab === key
+                        ? "bg-blue-600 text-white shadow-md"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    <Icon name={icon} size={18} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content */}
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                {/* PROYECTOS */}
+                {activeTab === "proyectos" && (
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-bold text-gray-800">Gestión de Proyectos</h2>
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => openModal("proyecto")}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                        >
+                          <Icon name="plus" size={18} />
+                          Nuevo Proyecto
+                        </button>
+                      )}
+                    </div>
+
+                    {proyectos.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500">
+                        <div className="flex justify-center mb-4">
+                          <Icon name="file-text" size={48} className="text-gray-300" />
+                        </div>
+                        <p>No hay proyectos registrados</p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4">
+                        {proyectos.map((proyecto) => {
+                          const disponible = calcularPresupuestoDisponible(proyecto);
+                          const porcentaje = Number(calcularPorcentajeUsado(proyecto));
+                          const alerta = porcentaje > 90;
+                          const usado = proyectoStats.get(proyecto.id)?.gastoTotal ?? 0;
+                          const horasAprobadas = proyectoStats.get(proyecto.id)?.horasAprobadas ?? 0;
+
+                          return (
+                            <div
+                              key={proyecto.id}
+                              className={`border rounded-lg p-4 ${
+                                alerta ? "border-red-300 bg-red-50" : "border-gray-200"
+                              }`}
+                            >
+                              <div className="flex justify-between items-start mb-3">
+                                <div>
+                                  <h3 className="text-xl font-bold text-gray-800">{proyecto.nombre}</h3>
+                                  <p className="text-gray-600">
+                                    {proyecto.empresa} - {proyecto.pais}
+                                  </p>
+                                </div>
+
+                                {userRole === "admin" && (
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => openModal("proyecto", proyecto)}
+                                      className="text-blue-600 hover:text-blue-800"
+                                      title="Editar"
+                                    >
+                                      <Icon name="pencil" size={18} />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteItem("proyecto", proyecto.id)}
+                                      className="text-red-600 hover:text-red-800"
+                                      title="Eliminar"
+                                    >
+                                      <Icon name="trash-2" size={18} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                                <div>
+                                  <p className="text-sm text-gray-600">Presupuesto Total</p>
+                                  <MoneyDual amount={proyecto.presupuesto} currency={proyecto.moneda} />
+                                </div>
+
+                                <div>
+                                  <p className="text-sm text-gray-600">Usado (gastos)</p>
+                                  <MoneyDual amount={usado} currency={proyecto.moneda} />
+                                </div>
+
+                                <div>
+                                  <p className="text-sm text-gray-600">Disponible</p>
+                                  <div className={disponible < 0 ? "text-red-700" : "text-green-700"}>
+                                    <MoneyDual amount={disponible} currency={proyecto.moneda} />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <p className="text-sm text-gray-600">Horas Aprobadas</p>
+                                  <p className="font-bold text-gray-800">{horasAprobadas} hrs</p>
+                                </div>
+                              </div>
+
+                              <div className="mb-2">
+                                <div className="flex justify-between text-sm mb-1">
+                                  <span className="text-gray-600">Uso del presupuesto</span>
+                                  <span className={`font-semibold ${alerta ? "text-red-600" : "text-gray-800"}`}>
+                                    {porcentaje.toFixed(1)}%
+                                  </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-3">
+                                  <div
+                                    className={`h-3 rounded-full transition-all ${
+                                      alerta ? "bg-red-600" : porcentaje > 70 ? "bg-yellow-500" : "bg-green-500"
+                                    }`}
+                                    style={{ width: `${Math.min(porcentaje, 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="text-sm text-gray-600 mt-3">
+                                <span className="font-semibold">Período:</span> {proyecto.fechaInicio} - {proyecto.fechaFin}
+                                {proyecto.tasa ? (
+                                  <span className="ml-4">
+                                    <span className="font-semibold">Tasa:</span> {proyecto.tasa}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* HORAS */}
+                {activeTab === "horas" && (
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-bold text-gray-800">
+                        {userRole === "colaborador" ? "Registro de Horas" : "Aprobación de Horas"}
+                      </h2>
+
+                      {userRole === "colaborador" && (
+                        <button
+                          onClick={() => openModal("horas")}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                        >
+                          <Icon name="plus" size={18} />
+                          Registrar Horas
+                        </button>
+                      )}
+                    </div>
+
+                    {userRole === "admin" && (
+                      <div className="mb-6 flex gap-3 flex-wrap">
+                        <button
+                          onClick={() => openModal("gasto")}
+                          className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 transition-colors"
+                        >
+                          <Icon name="dollar-sign" size={18} />
+                          Registrar Gasto
+                        </button>
+
+                        <button
+                          onClick={() => openModal("proyeccion")}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-indigo-700 transition-colors"
+                          title="Plan de horas por consultor (proyección)"
+                        >
+                          <Icon name="calendar" size={18} />
+                          Nueva Proyección
+                        </button>
+                      </div>
+                    )}
+
+                    {horas.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500">
+                        <div className="flex justify-center mb-4">
+                          <Icon name="clock" size={48} className="text-gray-300" />
+                        </div>
+                        <p>No hay horas registradas</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Fecha</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Consultor</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Proyecto</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Rol</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Tarea</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Horas</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Estado</th>
+                              {(userRole === "lider" || userRole === "admin") && (
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Acciones</th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {horas.map((hora) => (
+                              <tr key={hora.id} className="border-b hover:bg-gray-50">
+                                <td className="px-4 py-3 text-sm">{hora.fecha}</td>
+                                <td className="px-4 py-3 text-sm">{hora.consultor}</td>
+                                <td className="px-4 py-3 text-sm">{getProyectoName(hora.proyectoId)}</td>
+                                <td className="px-4 py-3 text-sm">{hora.rol}</td>
+                                <td className="px-4 py-3 text-sm">{hora.tarea}</td>
+                                <td className="px-4 py-3 text-sm font-semibold">{toNum(hora.horas)} hrs</td>
+                                <td className="px-4 py-3 text-sm">
+                                  <Badge
+                                    tone={
+                                      hora.estado === "Aprobado"
+                                        ? "green"
+                                        : hora.estado === "Rechazado"
+                                        ? "red"
+                                        : "yellow"
+                                    }
+                                  >
+                                    {hora.estado}
+                                  </Badge>
+                                </td>
+
+                                {(userRole === "lider" || userRole === "admin") && (
+                                  <td className="px-4 py-3 text-sm">
+                                    <div className="flex gap-2 items-center">
+                                      {hora.estado === "Pendiente" ? (
+                                        <>
+                                          <button
+                                            onClick={() => aprobarHoras(hora.id)}
+                                            className="text-green-600 hover:text-green-800"
+                                            title="Aprobar"
+                                          >
+                                            <Icon name="check-circle" size={18} />
+                                          </button>
+                                          <button
+                                            onClick={() => rechazarHoras(hora.id)}
+                                            className="text-red-600 hover:text-red-800"
+                                            title="Rechazar"
+                                          >
+                                            <Icon name="x" size={18} />
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <span className="text-gray-400 text-xs">—</span>
+                                      )}
+
+                                      <button
+                                        onClick={() => deleteItem("horas", hora.id)}
+                                        className="ml-2 text-gray-500 hover:text-gray-800"
+                                        title="Eliminar registro"
+                                      >
+                                        <Icon name="trash-2" size={18} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* PROYECCIONES */}
+                    {userRole === "admin" && proyecciones.length > 0 && (
+                      <div className="mt-8">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">Proyecciones (Plan de horas)</h3>
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Proyecto</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Consultor</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Rol</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Rango</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Horas</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Tarifa/h</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Acciones</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {proyecciones.map((x) => {
+                                const moneda = getProyectoMoneda(x.proyectoId);
+                                return (
+                                  <tr key={x.id} className="border-b hover:bg-gray-50">
+                                    <td className="px-4 py-3 text-sm">{getProyectoName(x.proyectoId)}</td>
+                                    <td className="px-4 py-3 text-sm">{x.consultor}</td>
+                                    <td className="px-4 py-3 text-sm">{x.rol}</td>
+                                    <td className="px-4 py-3 text-sm">{x.fechaInicio} → {x.fechaFin}</td>
+                                    <td className="px-4 py-3 text-sm font-semibold">{toNum(x.horasProyectadas)}</td>
+                                    <td className="px-4 py-3 text-sm">
+                                      {x.tarifaHora ? <MoneyDual amount={x.tarifaHora} currency={moneda} /> : <span className="text-gray-400 text-xs">—</span>}
+                                    </td>
+                                    <td className="px-4 py-3 text-sm">
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => openModal("proyeccion", x)}
+                                          className="text-blue-600 hover:text-blue-800"
+                                          title="Editar"
+                                        >
+                                          <Icon name="pencil" size={18} />
+                                        </button>
+                                        <button
+                                          onClick={() => deleteItem("proyeccion", x.id)}
+                                          className="text-red-600 hover:text-red-800"
+                                          title="Eliminar"
+                                        >
+                                          <Icon name="trash-2" size={18} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                          Si llenas <span className="font-semibold">Tarifa/h</span>, se calcula costo proyectado y alerta de presupuesto.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* GASTOS */}
+                    {userRole === "admin" && gastos.length > 0 && (
+                      <div className="mt-8">
+                        <h3 className="text-xl font-bold text-gray-800 mb-4">Gastos Registrados (doble moneda)</h3>
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Proyecto</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Tipo</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Descripción</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Valor</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Clasificación</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Acciones</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {gastos.map((gasto) => {
+                                const moneda = getProyectoMoneda(gasto.proyectoId);
+                                return (
+                                  <tr key={gasto.id} className="border-b hover:bg-gray-50">
+                                    <td className="px-4 py-3 text-sm">{getProyectoName(gasto.proyectoId)}</td>
+                                    <td className="px-4 py-3 text-sm">{gasto.tipoGasto}</td>
+                                    <td className="px-4 py-3 text-sm">{gasto.descripcion}</td>
+                                    <td className="px-4 py-3 text-sm">
+                                      <MoneyDual amount={gasto.valor} currency={moneda} />
+                                    </td>
+                                    <td className="px-4 py-3 text-sm">
+                                      <Badge tone={gasto.esVariable === "variable" ? "blue" : "purple"}>
+                                        {gasto.esVariable === "variable" ? "Variable" : "Fijo"}
+                                      </Badge>
+                                    </td>
+                                    <td className="px-4 py-3 text-sm">
+                                      <div className="flex gap-2">
+                                        <button
+                                          onClick={() => openModal("gasto", gasto)}
+                                          className="text-blue-600 hover:text-blue-800"
+                                          title="Editar"
+                                        >
+                                          <Icon name="pencil" size={18} />
+                                        </button>
+                                        <button
+                                          onClick={() => deleteItem("gasto", gasto.id)}
+                                          className="text-red-600 hover:text-red-800"
+                                          title="Eliminar"
+                                        >
+                                          <Icon name="trash-2" size={18} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* STAFFING */}
+                {activeTab === "staffing" && (
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-2xl font-bold text-gray-800">Gestión de Consultores</h2>
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => openModal("consultor")}
+                          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+                        >
+                          <Icon name="plus" size={18} />
+                          Nuevo Consultor
+                        </button>
+                      )}
+                    </div>
+
+                    {consultores.length === 0 ? (
+                      <div className="text-center py-12 text-gray-500">
+                        <div className="flex justify-center mb-4">
+                          <Icon name="users" size={48} className="text-gray-300" />
+                        </div>
+                        <p>No hay consultores registrados</p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {consultores.map((consultor) => (
+                          <div key={consultor.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                                  {(consultor.nombre || "?").charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                  <h3 className="font-bold text-gray-800">{consultor.nombre}</h3>
+                                  <p className="text-sm text-blue-600 font-semibold">{consultor.rol}</p>
+                                </div>
+                              </div>
+
+                              {userRole === "admin" && (
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => openModal("consultor", consultor)}
+                                    className="text-blue-600 hover:text-blue-800"
+                                    title="Editar"
+                                  >
+                                    <Icon name="pencil" size={18} />
+                                  </button>
+                                  <button
+                                    onClick={() => deleteItem("consultor", consultor.id)}
+                                    className="text-red-600 hover:text-red-800"
+                                    title="Eliminar"
+                                  >
+                                    <Icon name="trash-2" size={18} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-2 text-sm text-gray-600">
+                              <p><span className="font-semibold">ID:</span> {consultor.identificacion}</p>
+                              <p><span className="font-semibold">Email:</span> {consultor.correo}</p>
+                              {consultor.horasMaximas ? (
+                                <p><span className="font-semibold">Horas máximas:</span> {consultor.horasMaximas} hrs</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ESTADÍSTICAS */}
+                {activeTab === "estadisticas" && (
+                  <div>
+                    <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
+                      <div>
+                        <h2 className="text-2xl font-bold text-gray-800">Estadísticas</h2>
+                        <p className="text-sm text-gray-500">
+                          Aquí también todo sale en doble moneda (si coincide con {fx.monedaA}/{fx.monedaB}).
+                        </p>
+                      </div>
+
+                      {userRole === "admin" && (
+                        <button
+                          onClick={() => openModal("proyeccion")}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-indigo-700 transition-colors"
+                        >
+                          <Icon name="calendar" size={18} />
+                          Añadir Proyección
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Filtros */}
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Empresa</label>
+                          <select
+                            value={statsFilters.empresa}
+                            onChange={(e) => setStatsFilters((f) => ({ ...f, empresa: e.target.value, proyectoId: "" }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Todas</option>
+                            {empresas.map((emp) => (
+                              <option key={emp} value={emp}>{emp}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Proyecto</label>
+                          <select
+                            value={statsFilters.proyectoId}
+                            onChange={(e) => setStatsFilters((f) => ({ ...f, proyectoId: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">Todos</option>
+                            {proyectosFiltrables.map((p) => (
+                              <option key={p.id} value={p.id}>{p.nombre}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Desde</label>
+                          <input
+                            type="date"
+                            value={statsFilters.desde}
+                            onChange={(e) => setStatsFilters((f) => ({ ...f, desde: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-1">Hasta</label>
+                          <input
+                            type="date"
+                            value={statsFilters.hasta}
+                            onChange={(e) => setStatsFilters((f) => ({ ...f, hasta: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex gap-2 flex-wrap items-center">
+                        <button
+                          onClick={() => setStatsFilters({ empresa: "", proyectoId: "", desde: "", hasta: "" })}
+                          className="px-3 py-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-100 text-sm"
+                        >
+                          Limpiar filtros
+                        </button>
+
+                        <div className="text-sm text-gray-600 flex items-center gap-2">
+                          <Badge tone="green">OK</Badge>
+                          <Badge tone="yellow">Riesgo</Badge>
+                          <Badge tone="red">Se pasa</Badge>
+                          <span className="text-gray-500">(Riesgo &gt; 90% proyectado, Se pasa &gt; 100%)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Resumen por proyecto */}
+                    <h3 className="text-xl font-bold text-gray-800 mb-3">
+                      Saldo disponible + alerta de presupuesto proyectado (doble moneda)
+                    </h3>
+
+                    {resumenPorProyecto.length === 0 ? (
+                      <div className="text-gray-500">No hay proyectos que coincidan con los filtros.</div>
+                    ) : (
+                      <div className="overflow-x-auto mb-8">
+                        <table className="w-full">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Empresa</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Proyecto</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Presupuesto</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Gasto real</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Saldo</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Proyección (costo)</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Total proyectado</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {resumenPorProyecto.map((r) => {
+                              const moneda = r.proyecto.moneda;
+                              const pct = r.projectedPct;
+                              const tone = pct > 100 ? "red" : pct > 90 ? "yellow" : "green";
+                              return (
+                                <tr key={r.proyecto.id} className="border-b hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-sm">{r.proyecto.empresa}</td>
+                                  <td className="px-4 py-3 text-sm font-semibold">{r.proyecto.nombre}</td>
+                                  <td className="px-4 py-3 text-sm">
+                                    <MoneyDual amount={r.presupuesto} currency={moneda} />
+                                  </td>
+                                  <td className="px-4 py-3 text-sm">
+                                    <MoneyDual amount={r.usado} currency={moneda} />
+                                  </td>
+                                  <td className={`px-4 py-3 text-sm ${r.disponible < 0 ? "text-red-700" : "text-green-700"}`}>
+                                    <MoneyDual amount={r.disponible} currency={moneda} />
+                                  </td>
+                                  <td className="px-4 py-3 text-sm">
+                                    {r.hasProjectionPricing ? (
+                                      <MoneyDual amount={r.projectedCost} currency={moneda} />
+                                    ) : (
+                                      <span className="text-gray-400 text-xs">Sin tarifa/h en proyección</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm">
+                                    <MoneyDual amount={r.projectedTotal} currency={moneda} />
+                                    <div className="text-xs text-gray-500 mt-1">{pct.toFixed(1)}%</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-sm">
+                                    <Badge tone={tone}>{pct > 100 ? "Se pasa" : pct > 90 ? "Riesgo" : "OK"}</Badge>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Horas por consultor */}
+                    <h3 className="text-xl font-bold text-gray-800 mb-3">Horas aprobadas por consultor</h3>
+                    {horasPorConsultor.length === 0 ? (
+                      <div className="text-gray-500 mb-8">No hay horas aprobadas dentro de los filtros.</div>
+                    ) : (
+                      <div className="overflow-x-auto mb-8">
+                        <table className="w-full">
+                          <thead className="bg-gray-100">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Consultor</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Total horas</th>
+                              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Detalle por proyecto</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {horasPorConsultor.map((r) => (
+                              <tr key={r.consultor} className="border-b hover:bg-gray-50">
+                                <td className="px-4 py-3 text-sm font-semibold">{r.consultor}</td>
+                                <td className="px-4 py-3 text-sm">{r.total.toLocaleString()}</td>
+                                <td className="px-4 py-3 text-sm">
+                                  <div className="flex flex-wrap gap-2">
+                                    {Array.from(r.byProject.entries()).map(([pid, hrs]) => (
+                                      <span
+                                        key={pid}
+                                        className="px-2 py-1 rounded-full bg-gray-100 text-gray-800 text-xs font-semibold"
+                                      >
+                                        {getProyectoName(pid)}: {hrs}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Proyección por consultor */}
+                    <h3 className="text-xl font-bold text-gray-800 mb-3">
+                      Proyección de horas por consultor (y costo en doble moneda)
+                    </h3>
+
+                    {proyeccionHorasPorConsultor.length === 0 ? (
+                      <div className="text-gray-500">
+                        No hay proyecciones que coincidan con los filtros. (Agrega una en “Añadir Proyección”).
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {proyeccionHorasPorConsultor.map((row) => (
+                          <div key={row.consultor} className="border border-gray-200 rounded-lg p-4">
+                            <div className="flex items-center justify-between flex-wrap gap-3">
+                              <div>
+                                <div className="text-lg font-bold text-gray-800">{row.consultor}</div>
+                                <div className="text-sm text-gray-600">
+                                  Total proyectado: <span className="font-semibold">{row.totalHoras}</span> hrs
+                                </div>
+                              </div>
+                              <Badge tone="blue">{row.items.length} ítems</Badge>
+                            </div>
+
+                            <div className="mt-3 overflow-x-auto">
+                              <table className="w-full">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Proyecto</th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Rol</th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Rango</th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Horas</th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Tarifa/h</th>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold text-gray-700">Costo</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {row.items.map((x) => {
+                                    const moneda = getProyectoMoneda(x.proyectoId);
+                                    const costo = toNum(x.horasProyectadas) * toNum(x.tarifaHora);
+                                    return (
+                                      <tr key={x.id} className="border-t">
+                                        <td className="px-3 py-2 text-sm">{getProyectoName(x.proyectoId)}</td>
+                                        <td className="px-3 py-2 text-sm">{x.rol}</td>
+                                        <td className="px-3 py-2 text-sm">
+                                          {x.fechaInicio} → {x.fechaFin}
+                                        </td>
+                                        <td className="px-3 py-2 text-sm font-semibold">{toNum(x.horasProyectadas)}</td>
+                                        <td className="px-3 py-2 text-sm">
+                                          {x.tarifaHora ? <MoneyDual amount={x.tarifaHora} currency={moneda} /> : <span className="text-gray-400 text-xs">—</span>}
+                                        </td>
+                                        <td className="px-3 py-2 text-sm">
+                                          {x.tarifaHora ? <MoneyDual amount={costo} currency={moneda} /> : <span className="text-gray-400 text-xs">—</span>}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal */}
+            {showModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                  <div className="p-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-bold text-gray-800">
+                        {editingId ? "Editar" : "Nuevo"}{" "}
+                        {modalType === "proyecto"
+                          ? "Proyecto"
+                          : modalType === "consultor"
+                          ? "Consultor"
+                          : modalType === "horas"
+                          ? "Registro de Horas"
+                          : modalType === "gasto"
+                          ? "Gasto"
+                          : "Proyección"}
+                      </h3>
+                      <button onClick={closeModal} className="text-gray-500 hover:text-gray-700" title="Cerrar">
+                        <Icon name="x" size={22} />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      {/* PROYECTO */}
+                      {modalType === "proyecto" && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre del Proyecto</label>
+                            <input
+                              type="text"
+                              required
+                              value={formData.nombre || ""}
+                              onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Empresa</label>
+                              <input
+                                type="text"
+                                required
+                                value={formData.empresa || ""}
+                                onChange={(e) => setFormData({ ...formData, empresa: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">País</label>
+                              <input
+                                type="text"
+                                required
+                                value={formData.pais || ""}
+                                onChange={(e) => setFormData({ ...formData, pais: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Presupuesto</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                required
+                                value={formData.presupuesto ?? ""}
+                                onChange={(e) => setFormData({ ...formData, presupuesto: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Moneda</label>
+                              <select
+                                required
+                                value={formData.moneda || ""}
+                                onChange={(e) => setFormData({ ...formData, moneda: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">Seleccionar</option>
+                                {monedas.map((m) => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Tasa de Cambio</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={formData.tasa || ""}
+                                onChange={(e) => setFormData({ ...formData, tasa: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="Opcional"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha Inicio</label>
+                              <input
+                                type="date"
+                                required
+                                value={formData.fechaInicio || ""}
+                                onChange={(e) => setFormData({ ...formData, fechaInicio: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha Fin</label>
+                              <input
+                                type="date"
+                                required
+                                value={formData.fechaFin || ""}
+                                onChange={(e) => setFormData({ ...formData, fechaFin: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* CONSULTOR */}
+                      {modalType === "consultor" && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre Completo</label>
+                            <input
+                              type="text"
+                              required
+                              value={formData.nombre || ""}
+                              onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Identificación</label>
+                            <input
+                              type="text"
+                              required
+                              value={formData.identificacion || ""}
+                              onChange={(e) => setFormData({ ...formData, identificacion: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Correo Electrónico</label>
+                            <input
+                              type="email"
+                              required
+                              value={formData.correo || ""}
+                              onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Rol</label>
+                            <select
+                              required
+                              value={formData.rol || ""}
+                              onChange={(e) => setFormData({ ...formData, rol: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar</option>
+                              {roles.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Horas Máximas (opcional)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={formData.horasMaximas || ""}
+                              onChange={(e) => setFormData({ ...formData, horasMaximas: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              placeholder="Horas máximas de desarrollo"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* HORAS */}
+                      {modalType === "horas" && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre del Consultor</label>
+                            <input
+                              type="text"
+                              required
+                              value={formData.consultor || ""}
+                              onChange={(e) => setFormData({ ...formData, consultor: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Proyecto</label>
+                            <select
+                              required
+                              value={formData.proyectoId || ""}
+                              onChange={(e) => setFormData({ ...formData, proyectoId: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar proyecto</option>
+                              {proyectos.map((p) => (
+                                <option key={p.id} value={p.id}>{p.nombre}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Rol</label>
+                            <select
+                              required
+                              value={formData.rol || ""}
+                              onChange={(e) => setFormData({ ...formData, rol: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar rol</option>
+                              {roles.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Descripción de la Tarea</label>
+                            <textarea
+                              required
+                              value={formData.tarea || ""}
+                              onChange={(e) => setFormData({ ...formData, tarea: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              rows="3"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Horas Trabajadas</label>
+                            <input
+                              type="number"
+                              required
+                              step="0.5"
+                              min="0"
+                              value={formData.horas || ""}
+                              onChange={(e) => setFormData({ ...formData, horas: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* GASTO */}
+                      {modalType === "gasto" && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Proyecto</label>
+                            <select
+                              required
+                              value={formData.proyectoId || ""}
+                              onChange={(e) => setFormData({ ...formData, proyectoId: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar proyecto</option>
+                              {proyectos.map((p) => (
+                                <option key={p.id} value={p.id}>{p.nombre} ({p.moneda})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Tipo de Gasto</label>
+                            <select
+                              required
+                              value={formData.tipoGasto || ""}
+                              onChange={(e) => setFormData({ ...formData, tipoGasto: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar tipo</option>
+                              {catalogoGastos.map((g) => (
+                                <option key={g} value={g}>{g}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Descripción</label>
+                            <textarea
+                              required
+                              value={formData.descripcion || ""}
+                              onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              rows="3"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Valor del Gasto</label>
+                            <input
+                              type="number"
+                              required
+                              step="0.01"
+                              min="0"
+                              value={formData.valor || ""}
+                              onChange={(e) => setFormData({ ...formData, valor: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                              El valor se entiende en la moneda del proyecto.
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Clasificación</label>
+                            <select
+                              required
+                              value={formData.esVariable || ""}
+                              onChange={(e) => setFormData({ ...formData, esVariable: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar</option>
+                              <option value="fijo">Gasto Fijo</option>
+                              <option value="variable">Gasto Variable</option>
+                            </select>
+                          </div>
+                        </>
+                      )}
+
+                      {/* PROYECCIÓN */}
+                      {modalType === "proyeccion" && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Proyecto</label>
+                            <select
+                              required
+                              value={formData.proyectoId || ""}
+                              onChange={(e) => setFormData({ ...formData, proyectoId: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="">Seleccionar proyecto</option>
+                              {proyectos.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nombre} ({p.empresa}) - {p.moneda}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Consultor</label>
+                              <input
+                                type="text"
+                                required
+                                value={formData.consultor || ""}
+                                onChange={(e) => setFormData({ ...formData, consultor: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="Nombre (texto)"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Rol</label>
+                              <select
+                                required
+                                value={formData.rol || ""}
+                                onChange={(e) => setFormData({ ...formData, rol: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">Seleccionar rol</option>
+                                {roles.map((r) => (
+                                  <option key={r} value={r}>{r}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha Inicio</label>
+                              <input
+                                type="date"
+                                required
+                                value={formData.fechaInicio || ""}
+                                onChange={(e) => setFormData({ ...formData, fechaInicio: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha Fin</label>
+                              <input
+                                type="date"
+                                required
+                                value={formData.fechaFin || ""}
+                                onChange={(e) => setFormData({ ...formData, fechaFin: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">Horas Proyectadas</label>
+                              <input
+                                type="number"
+                                required
+                                step="0.5"
+                                min="0"
+                                value={formData.horasProyectadas || ""}
+                                onChange={(e) => setFormData({ ...formData, horasProyectadas: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-1">
+                                Tarifa por hora (opcional)
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={formData.tarifaHora || ""}
+                                onChange={(e) => setFormData({ ...formData, tarifaHora: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                placeholder="En moneda del proyecto"
+                              />
+                              <p className="text-xs text-gray-500 mt-1">
+                                Si está en {fx.monedaA} o {fx.monedaB}, se verá en doble moneda con tu TRM.
+                              </p>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      <div className="flex gap-3 pt-4">
+                        <button
+                          type="submit"
+                          className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                        >
+                          <Icon name="save" size={18} />
+                          {editingId ? "Actualizar" : "Guardar"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={closeModal}
+                          className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <Toast toast={toast} onClose={() => setToast(null)} />
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
