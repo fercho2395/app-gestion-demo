@@ -29,8 +29,27 @@ if (!existsSync(indexFile)) {
   process.exit(1);
 }
 
+function renderEnvScript() {
+  const config = {
+    VITE_API_URL: process.env.VITE_API_URL || '',
+    VITE_AZURE_TENANT_ID: process.env.VITE_AZURE_TENANT_ID || '',
+    VITE_AZURE_CLIENT_ID: process.env.VITE_AZURE_CLIENT_ID || '',
+    VITE_AZURE_REDIRECT_URI: process.env.VITE_AZURE_REDIRECT_URI || '',
+  };
+
+  return `window.__APP_CONFIG__ = ${JSON.stringify(config)};`;
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+
+  if (urlPath === '/env.js') {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(renderEnvScript());
+    return;
+  }
+
   const requestedPath = urlPath === '/' ? '/index.html' : urlPath;
   const relativePath = requestedPath.replace(/^\/+/, '');
 
