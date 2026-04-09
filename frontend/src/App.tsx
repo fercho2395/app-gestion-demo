@@ -63,7 +63,10 @@ function numberish(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function getAccessToken(instance: ReturnType<typeof useMsal>["instance"], account: ReturnType<typeof useMsal>["accounts"][number]) {
+async function getAccessToken(
+  instance: ReturnType<typeof useMsal>["instance"],
+  account: ReturnType<typeof useMsal>["accounts"][number],
+): Promise<string | null> {
   const preferAccessToken = Boolean(env.azureApiScope);
 
   try {
@@ -73,8 +76,12 @@ async function getAccessToken(instance: ReturnType<typeof useMsal>["instance"], 
     });
     return preferAccessToken ? result.accessToken || result.idToken : result.idToken || result.accessToken;
   } catch {
-    const result = await instance.acquireTokenPopup(apiTokenRequest);
-    return preferAccessToken ? result.accessToken || result.idToken : result.idToken || result.accessToken;
+    await instance.acquireTokenRedirect({
+      ...apiTokenRequest,
+      account,
+      redirectStartPage: `${window.location.origin}/home`,
+    });
+    return null;
   }
 }
 
@@ -231,6 +238,9 @@ function App() {
         }
 
         const token = await getAccessToken(instance, accounts[0]);
+        if (!token) {
+          return;
+        }
         setApiAccessToken(token);
       } else {
         setApiAccessToken(null);
