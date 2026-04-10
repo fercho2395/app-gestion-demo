@@ -8,7 +8,6 @@ import { forecastsRoutes } from "../modules/forecasts/forecasts.routes.js";
 import { statsRoutes } from "../modules/stats/stats.routes.js";
 import { authRoutes } from "../modules/auth/auth.routes.js";
 import { adminUsersRoutes } from "../modules/admin/users.routes.js";
-import { fxConfigRoutes } from "../modules/fx-config/fx-config.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(healthRoutes);
@@ -19,6 +18,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(expensesRoutes, { prefix: "/api/expenses" });
   await app.register(forecastsRoutes, { prefix: "/api/forecasts" });
   await app.register(statsRoutes, { prefix: "/api/stats" });
-  await app.register(fxConfigRoutes, { prefix: "/api/fx-config" });
   await app.register(adminUsersRoutes, { prefix: "/api/admin/users" });
 }

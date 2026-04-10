@@ -126,14 +126,6 @@ export type StatsOverview = {
   };
 };
 
-export type FxConfig = {
-  id?: string;
-  baseCode: string;
-  quoteCode: string;
-  rate: number;
-  updatedAt?: string;
-};
-
 function ensureApiUrl() {
   if (!env.apiUrl) {
     throw new Error("Missing VITE_API_URL in frontend build configuration");
@@ -402,19 +394,5 @@ export async function deleteForecast(id: string): Promise<void> {
 
 export async function getStatsOverview(): Promise<StatsOverview> {
   const response = await request<ApiEnvelope<StatsOverview>>("/api/stats/overview");
-  return response.data;
-}
-
-export async function getFxConfig(): Promise<FxConfig> {
-  const response = await request<ApiEnvelope<FxConfig>>("/api/fx-config");
-  return response.data;
-}
-
-export async function updateFxConfig(payload: {
-  baseCode: string;
-  quoteCode: string;
-  rate: number;
-}): Promise<FxConfig> {
-  const response = await request<ApiEnvelope<FxConfig>>("/api/fx-config", "PUT", payload);
   return response.data;
 }

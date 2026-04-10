@@ -149,9 +149,9 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
-.fx-grid {
+.converter-grid {
   margin-top: 0.8rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .fx-note {
@@ -159,6 +159,52 @@
   color: #7c3f0c;
   font-size: 0.82rem;
   font-weight: 600;
+}
+
+.converter-result {
+  margin: 0.5rem 0 0;
+  color: #5f2f00;
+  font-weight: 700;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 40;
+}
+
+.modal-card {
+  width: min(640px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #f4d4b6;
+  border-radius: 16px;
+  padding: 1rem;
+  box-shadow: 0 18px 35px rgba(15, 23, 42, 0.24);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #5f2f00;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .form-grid > * {
@@ -302,24 +348,6 @@ th {
   flex-wrap: wrap;
 }
 
-.money-dual {
-  display: grid;
-  gap: 0.08rem;
-}
-
-.money-dual > span {
-  font-weight: 700;
-}
-
-.money-dual > small {
-  font-size: 0.74rem;
-  color: #475569;
-}
-
-.money-dual > small.muted {
-  color: #94a3b8;
-}
-
 @media (max-width: 1100px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -337,7 +365,7 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .fx-grid {
+  .converter-grid {
     grid-template-columns: 1fr;
   }
 }

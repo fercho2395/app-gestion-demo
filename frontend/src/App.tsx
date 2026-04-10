@@ -18,7 +18,6 @@ import {
   getHealth,
   getMe,
   getStatsOverview,
-  getFxConfig,
   listAdminUsers,
   listConsultants,
   listExpenses,
@@ -30,7 +29,6 @@ import {
   updateConsultant,
   updateExpense,
   updateForecast,
-  updateFxConfig,
   updateProject,
   type AdminUser,
   type AppRole,
@@ -46,6 +44,58 @@ import {
 import "./App.css";
 
 type TabId = "dashboard" | "projects" | "consultants" | "timeEntries" | "expenses" | "forecasts" | "admin";
+
+type EditModalState =
+  | {
+      type: "project";
+      id: string;
+      form: {
+        name: string;
+        company: string;
+        country: string;
+        currency: string;
+        budget: string;
+        startDate: string;
+        endDate: string;
+        description: string;
+      };
+    }
+  | {
+      type: "consultant";
+      id: string;
+      form: {
+        fullName: string;
+        email: string;
+        role: string;
+        hourlyRate: string;
+        active: boolean;
+      };
+    }
+  | {
+      type: "expense";
+      id: string;
+      form: {
+        projectId: string;
+        expenseDate: string;
+        category: string;
+        amount: string;
+        currency: string;
+        description: string;
+      };
+    }
+  | {
+      type: "forecast";
+      id: string;
+      form: {
+        projectId: string;
+        consultantId: string;
+        period: string;
+        hoursProjected: string;
+        hourlyRate: string;
+        note: string;
+      };
+    }
+  | null;
 
 const allTabs: Array<{ id: TabId; label: string; permission?: string }> = [
   { id: "dashboard", label: "Dashboard", permission: "stats:read" },
@@ -181,9 +231,10 @@ function App() {
     from: "",
     to: "",
   });
-  const [fxConfig, setFxConfig] = useState({
-    currencyA: "USD",
-    currencyB: "COP",
+  const [currencyConverter, setCurrencyConverter] = useState({
+    baseCurrency: "USD",
+    targetCurrency: "COP",
+    amount: "1",
     rate: "4000",
   });
 
@@ -242,6 +293,7 @@ function App() {
     active: true,
     role: "VIEWER" as AppRole,
   });
+  const [editModal, setEditModal] = useState<EditModalState>(null);
 
   const permissions = authUser?.permissions ?? [];
 
@@ -282,42 +334,12 @@ function App() {
     });
   }, [projects, projectSearch]);
 
-  function dualMoneyValue(amount: number, currency: string) {
-    const source = currency;
-    const a = fxConfig.currencyA;
-    const b = fxConfig.currencyB;
-    const rate = numberish(fxConfig.rate);
-
-    if (!rate || rate <= 0) {
-      return {
-        primary: `${source} ${formatPlainMoney(amount)}`,
-        secondary: "TRM no definida",
-        muted: true,
-      };
-    }
-
-    if (source === a) {
-      return {
-        primary: `${a} ${formatPlainMoney(amount)}`,
-        secondary: `${b} ${formatPlainMoney(amount * rate)}`,
-        muted: false,
-      };
-    }
-
-    if (source === b) {
-      return {
-        primary: `${b} ${formatPlainMoney(amount)}`,
-        secondary: `${a} ${formatPlainMoney(amount / rate)}`,
-        muted: false,
-      };
-    }
-
-    return {
-      primary: `${source} ${formatPlainMoney(amount)}`,
-      secondary: `No convertible (${a}↔${b})`,
-      muted: true,
-    };
-  }
+  const convertedAmount = useMemo(() => {
+    const amount = numberish(currencyConverter.amount);
+    const rate = numberish(currencyConverter.rate);
+    if (rate <= 0) return null;
+    return amount * rate;
+  }, [currencyConverter.amount, currencyConverter.rate]);
 
   const companies = useMemo(() => {
     const unique = new Set(projects.map((project) => project.company).filter(Boolean));
@@ -461,7 +483,7 @@ function App() {
   async function loadDomainData(user: AuthUser | null) {
     const userPermissions = user?.permissions ?? [];
 
-    const [projectsResult, consultantsResult, timeEntriesResult, expensesResult, forecastsResult, statsResult, adminUsersResult, fxConfigResult] =
+    const [projectsResult, consultantsResult, timeEntriesResult, expensesResult, forecastsResult, statsResult, adminUsersResult] =
       await Promise.all([
         userPermissions.includes("projects:read") ? listProjects() : Promise.resolve([]),
         userPermissions.includes("consultants:read") ? listConsultants() : Promise.resolve([]),
@@ -470,7 +492,6 @@ function App() {
         userPermissions.includes("forecasts:read") ? listForecasts() : Promise.resolve([]),
         userPermissions.includes("stats:read") ? getStatsOverview() : Promise.resolve(null),
         userPermissions.includes("users:manage") ? listAdminUsers() : Promise.resolve([]),
-        userPermissions.includes("stats:read") ? getFxConfig() : Promise.resolve(null),
       ]);
 
     setProjects(projectsResult);
@@ -480,36 +501,6 @@ function App() {
     setForecasts(forecastsResult);
     setStats(statsResult);
     setAdminUsers(adminUsersResult);
-    if (fxConfigResult) {
-      setFxConfig({
-        currencyA: fxConfigResult.baseCode,
-        currencyB: fxConfigResult.quoteCode,
-        rate: String(fxConfigResult.rate),
-      });
-    }
-  }
-
-  async function saveFxConfiguration() {
-    try {
-      const rate = numberish(fxConfig.rate);
-      if (rate <= 0) {
-        throw new Error("La TRM debe ser mayor a 0");
-      }
-
-      const saved = await updateFxConfig({
-        baseCode: fxConfig.currencyA,
-        quoteCode: fxConfig.currencyB,
-        rate,
-      });
-
-      setFxConfig({
-        currencyA: saved.baseCode,
-        currencyB: saved.quoteCode,
-        rate: String(saved.rate),
-      });
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo guardar configuración FX");
-    }
   }
 
   async function bootstrap() {
@@ -570,30 +561,20 @@ function App() {
   }
 
   async function editProject(project: Project) {
-    try {
-      const name = window.prompt("Nombre del proyecto", project.name);
-      if (!name) return;
-      const company = window.prompt("Empresa", project.company);
-      if (!company) return;
-      const country = window.prompt("Pais", project.country);
-      if (!country) return;
-      const budgetText = window.prompt("Presupuesto", String(numberish(project.budget)));
-      if (!budgetText) return;
-
-      await updateProject(project.id, {
-        name,
-        company,
-        country,
+    setEditModal({
+      type: "project",
+      id: project.id,
+      form: {
+        name: project.name,
+        company: project.company,
+        country: project.country,
         currency: project.currency,
-        budget: Number(budgetText),
+        budget: String(numberish(project.budget)),
         startDate: toDateInput(project.startDate),
         endDate: toDateInput(project.endDate),
         description: project.description || "",
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo editar proyecto");
-    }
+      },
+    });
   }
 
   async function removeProject(project: Project) {
@@ -624,23 +605,17 @@ function App() {
   }
 
   async function editConsultant(consultant: Consultant) {
-    try {
-      const fullName = window.prompt("Nombre del consultor", consultant.fullName);
-      if (!fullName) return;
-      const role = window.prompt("Rol", consultant.role);
-      if (!role) return;
-
-      await updateConsultant(consultant.id, {
-        fullName,
+    setEditModal({
+      type: "consultant",
+      id: consultant.id,
+      form: {
+        fullName: consultant.fullName,
         email: consultant.email || "",
-        role,
-        hourlyRate: numberish(consultant.hourlyRate),
+        role: consultant.role,
+        hourlyRate: String(numberish(consultant.hourlyRate)),
         active: consultant.active,
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo editar consultor");
-    }
+      },
+    });
   }
 
   async function toggleConsultantActive(consultant: Consultant) {
@@ -704,22 +679,18 @@ function App() {
   }
 
   async function editExpense(expense: Expense) {
-    try {
-      const amountText = window.prompt("Monto", String(numberish(expense.amount)));
-      if (!amountText) return;
-
-      await updateExpense(expense.id, {
+    setEditModal({
+      type: "expense",
+      id: expense.id,
+      form: {
         projectId: expense.projectId,
         expenseDate: toDateInput(expense.expenseDate),
         category: expense.category,
-        amount: Number(amountText),
+        amount: String(numberish(expense.amount)),
         currency: expense.currency,
         description: expense.description || "",
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo editar gasto");
-    }
+      },
+    });
   }
 
   async function removeExpense(expense: Expense) {
@@ -770,21 +741,74 @@ function App() {
   }
 
   async function editForecast(forecast: Forecast) {
-    try {
-      const hoursText = window.prompt("Horas proyectadas", String(numberish(forecast.hoursProjected)));
-      if (!hoursText) return;
-
-      await updateForecast(forecast.id, {
+    setEditModal({
+      type: "forecast",
+      id: forecast.id,
+      form: {
         projectId: forecast.projectId,
         consultantId: forecast.consultantId,
         period: forecast.period,
-        hoursProjected: Number(hoursText),
-        hourlyRate: forecast.hourlyRate ? Number(forecast.hourlyRate) : undefined,
+        hoursProjected: String(numberish(forecast.hoursProjected)),
+        hourlyRate: String(numberish(forecast.hourlyRate)),
         note: forecast.note || "",
-      });
+      },
+    });
+  }
+
+  async function submitEditModal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editModal) return;
+
+    try {
+      if (editModal.type === "project") {
+        await updateProject(editModal.id, {
+          name: editModal.form.name,
+          company: editModal.form.company,
+          country: editModal.form.country,
+          currency: editModal.form.currency,
+          budget: Number(editModal.form.budget),
+          startDate: editModal.form.startDate,
+          endDate: editModal.form.endDate,
+          description: editModal.form.description,
+        });
+      }
+
+      if (editModal.type === "consultant") {
+        await updateConsultant(editModal.id, {
+          fullName: editModal.form.fullName,
+          email: editModal.form.email,
+          role: editModal.form.role,
+          hourlyRate: editModal.form.hourlyRate ? Number(editModal.form.hourlyRate) : undefined,
+          active: editModal.form.active,
+        });
+      }
+
+      if (editModal.type === "expense") {
+        await updateExpense(editModal.id, {
+          projectId: editModal.form.projectId,
+          expenseDate: editModal.form.expenseDate,
+          category: editModal.form.category,
+          amount: Number(editModal.form.amount),
+          currency: editModal.form.currency,
+          description: editModal.form.description,
+        });
+      }
+
+      if (editModal.type === "forecast") {
+        await updateForecast(editModal.id, {
+          projectId: editModal.form.projectId,
+          consultantId: editModal.form.consultantId,
+          period: editModal.form.period,
+          hoursProjected: Number(editModal.form.hoursProjected),
+          hourlyRate: editModal.form.hourlyRate ? Number(editModal.form.hourlyRate) : undefined,
+          note: editModal.form.note,
+        });
+      }
+
+      setEditModal(null);
       await bootstrap();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo editar proyección");
+      setError(submitError instanceof Error ? submitError.message : "No se pudo guardar edición");
     }
   }
 
@@ -979,38 +1003,50 @@ function App() {
                 Limpiar filtros
               </button>
             </div>
-            <div className="form-grid fx-grid">
+          </article>
+
+          <article className="card">
+            <h3>Conversor de moneda</h3>
+            <div className="form-grid converter-grid">
               <select
-                value={fxConfig.currencyA}
-                onChange={(event) => setFxConfig((prev) => ({ ...prev, currencyA: event.target.value }))}
+                value={currencyConverter.baseCurrency}
+                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, baseCurrency: event.target.value }))}
               >
                 {currencyOptions.map((currency) => (
-                  <option key={`a-${currency}`} value={currency}>{`Moneda A: ${currency}`}</option>
+                  <option key={`base-${currency}`} value={currency}>{`Moneda base: ${currency}`}</option>
                 ))}
               </select>
               <select
-                value={fxConfig.currencyB}
-                onChange={(event) => setFxConfig((prev) => ({ ...prev, currencyB: event.target.value }))}
+                value={currencyConverter.targetCurrency}
+                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, targetCurrency: event.target.value }))}
               >
                 {currencyOptions.map((currency) => (
-                  <option key={`b-${currency}`} value={currency}>{`Moneda B: ${currency}`}</option>
+                  <option key={`target-${currency}`} value={currency}>{`Moneda destino: ${currency}`}</option>
                 ))}
               </select>
               <input
                 type="number"
                 min="0"
+                step="0.01"
+                value={currencyConverter.amount}
+                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, amount: event.target.value }))}
+                placeholder="Cantidad"
+              />
+              <input
+                type="number"
+                min="0"
                 step="0.0001"
-                value={fxConfig.rate}
-                onChange={(event) => setFxConfig((prev) => ({ ...prev, rate: event.target.value }))}
-                placeholder={`TRM ${fxConfig.currencyA} -> ${fxConfig.currencyB}`}
+                value={currencyConverter.rate}
+                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, rate: event.target.value }))}
+                placeholder={`Tasa ${currencyConverter.baseCurrency} -> ${currencyConverter.targetCurrency}`}
               />
             </div>
-            <div className="inline-actions">
-              <button type="button" onClick={() => void saveFxConfiguration()}>
-                Guardar TRM
-              </button>
-            </div>
-            <p className="fx-note">Conversión activa: {`${fxConfig.currencyA} -> ${fxConfig.currencyB}`}</p>
+            <p className="fx-note">Esta conversión solo aplica para la sesión actual.</p>
+            <p className="converter-result">
+              {convertedAmount === null
+                ? "Define una tasa mayor a 0 para ver el resultado"
+                : `${currencyConverter.baseCurrency} ${formatPlainMoney(numberish(currencyConverter.amount))} = ${currencyConverter.targetCurrency} ${formatPlainMoney(convertedAmount)}`}
+            </p>
           </article>
 
           <section className="grid dashboard-grid">
@@ -1040,21 +1076,16 @@ function App() {
                   {dashboardProjectSummary.map((row) => {
                     const tone = row.projectedPct > 100 ? "error" : row.projectedPct > 90 ? "warn" : "ok";
                     const statusLabel = row.projectedPct > 100 ? "Se pasa" : row.projectedPct > 90 ? "Riesgo" : "OK";
-                    const budgetDual = dualMoneyValue(numberish(row.project.budget), row.project.currency);
-                    const spentDual = dualMoneyValue(row.spent, row.project.currency);
-                    const remainingDual = dualMoneyValue(row.remaining, row.project.currency);
-                    const projectedDual = dualMoneyValue(row.projectedCost, row.project.currency);
-                    const projectedTotalDual = dualMoneyValue(row.projectedTotal, row.project.currency);
 
                     return (
                       <tr key={row.project.id}>
                         <td>{row.project.company}</td>
                         <td>{row.project.name}</td>
-                        <td><div className="money-dual"><span>{budgetDual.primary}</span><small className={budgetDual.muted ? "muted" : ""}>{budgetDual.secondary}</small></div></td>
-                        <td><div className="money-dual"><span>{spentDual.primary}</span><small className={spentDual.muted ? "muted" : ""}>{spentDual.secondary}</small></div></td>
-                        <td><div className="money-dual"><span>{remainingDual.primary}</span><small className={remainingDual.muted ? "muted" : ""}>{remainingDual.secondary}</small></div></td>
-                        <td><div className="money-dual"><span>{projectedDual.primary}</span><small className={projectedDual.muted ? "muted" : ""}>{projectedDual.secondary}</small></div></td>
-                        <td><div className="money-dual"><span>{`${projectedTotalDual.primary} (${row.projectedPct.toFixed(1)}%)`}</span><small className={projectedTotalDual.muted ? "muted" : ""}>{projectedTotalDual.secondary}</small></div></td>
+                        <td>{money(numberish(row.project.budget), row.project.currency)}</td>
+                        <td>{money(row.spent, row.project.currency)}</td>
+                        <td>{money(row.remaining, row.project.currency)}</td>
+                        <td>{money(row.projectedCost, row.project.currency)}</td>
+                        <td>{`${money(row.projectedTotal, row.project.currency)} (${row.projectedPct.toFixed(1)}%)`}</td>
                         <td><span className={`pill ${tone}`}>{statusLabel}</span></td>
                       </tr>
                     );
@@ -1226,7 +1257,7 @@ function App() {
               </form>
             )}
           </article>
-          <article className="card"><h3>Listado de gastos</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Categoría</th><th>Monto</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>{expenses.map((expense) => { const dual = dualMoneyValue(numberish(expense.amount), expense.currency); return (<tr key={expense.id}><td>{expense.project.name}</td><td>{expense.category}</td><td><div className="money-dual"><span>{dual.primary}</span><small className={dual.muted ? "muted" : ""}>{dual.secondary}</small></div></td><td>{new Date(expense.expenseDate).toLocaleDateString()}</td><td>{can("expenses:write") && (<div className="inline-actions"><button type="button" onClick={() => void editExpense(expense)}>Editar</button><button type="button" className="ghost" onClick={() => void removeExpense(expense)}>Eliminar</button></div>)}</td></tr>); })}</tbody></table></div></article>
+          <article className="card"><h3>Listado de gastos</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Categoría</th><th>Monto</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>{expenses.map((expense) => (<tr key={expense.id}><td>{expense.project.name}</td><td>{expense.category}</td><td>{money(numberish(expense.amount), expense.currency)}</td><td>{new Date(expense.expenseDate).toLocaleDateString()}</td><td>{can("expenses:write") && (<div className="inline-actions"><button type="button" onClick={() => void editExpense(expense)}>Editar</button><button type="button" className="ghost" onClick={() => void removeExpense(expense)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
         </section>
       )}
 
@@ -1256,7 +1287,7 @@ function App() {
               </form>
             )}
           </article>
-          <article className="card"><h3>Listado de proyecciones</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Consultor</th><th>Periodo</th><th>Horas</th><th>Costo</th><th>Acciones</th></tr></thead><tbody>{forecasts.map((forecast) => { const dual = dualMoneyValue(forecast.projectedCost || 0, forecast.project.currency); return (<tr key={forecast.id}><td>{forecast.project.name}</td><td>{forecast.consultant.fullName}</td><td>{forecast.period}</td><td>{numberish(forecast.hoursProjected).toFixed(2)}</td><td><div className="money-dual"><span>{dual.primary}</span><small className={dual.muted ? "muted" : ""}>{dual.secondary}</small></div></td><td>{can("forecasts:write") && (<div className="inline-actions"><button type="button" onClick={() => void editForecast(forecast)}>Editar</button><button type="button" className="ghost" onClick={() => void removeForecast(forecast)}>Eliminar</button></div>)}</td></tr>); })}</tbody></table></div></article>
+          <article className="card"><h3>Listado de proyecciones</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Consultor</th><th>Periodo</th><th>Horas</th><th>Costo</th><th>Acciones</th></tr></thead><tbody>{forecasts.map((forecast) => (<tr key={forecast.id}><td>{forecast.project.name}</td><td>{forecast.consultant.fullName}</td><td>{forecast.period}</td><td>{numberish(forecast.hoursProjected).toFixed(2)}</td><td>{money(forecast.projectedCost || 0, forecast.project.currency)}</td><td>{can("forecasts:write") && (<div className="inline-actions"><button type="button" onClick={() => void editForecast(forecast)}>Editar</button><button type="button" className="ghost" onClick={() => void removeForecast(forecast)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
         </section>
       )}
 
@@ -1279,6 +1310,102 @@ function App() {
           </article>
           <article className="card"><h3>Usuarios registrados</h3><div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Roles</th><th>Estado</th></tr></thead><tbody>{adminUsers.map((user) => (<tr key={user.id}><td>{user.displayName}</td><td>{user.email}</td><td>{user.roles.join(", ")}</td><td>{user.active ? "Activo" : "Inactivo"}</td></tr>))}</tbody></table></div></article>
         </section>
+      )}
+
+      {editModal && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3>
+                {editModal.type === "project" && "Editar proyecto"}
+                {editModal.type === "consultant" && "Editar consultor"}
+                {editModal.type === "expense" && "Editar gasto"}
+                {editModal.type === "forecast" && "Editar proyección"}
+              </h3>
+              <button type="button" className="ghost" onClick={() => setEditModal(null)}>Cerrar</button>
+            </div>
+
+            <form className="form-grid" onSubmit={(event) => void submitEditModal(event)}>
+              {editModal.type === "project" && (
+                <>
+                  <input value={editModal.form.name} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, name: event.target.value } } : prev)} placeholder="Nombre" required />
+                  <input value={editModal.form.company} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, company: event.target.value } } : prev)} placeholder="Empresa" required />
+                  <input value={editModal.form.country} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, country: event.target.value } } : prev)} placeholder="País" required />
+                  <select value={editModal.form.currency} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, currency: event.target.value } } : prev)} required>
+                    {currencyOptions.map((currency) => (
+                      <option key={`project-edit-${currency}`} value={currency}>{currency}</option>
+                    ))}
+                  </select>
+                  <input type="number" value={editModal.form.budget} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, budget: event.target.value } } : prev)} placeholder="Presupuesto" required />
+                  <input type="date" value={editModal.form.startDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, startDate: event.target.value } } : prev)} required />
+                  <input type="date" value={editModal.form.endDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, endDate: event.target.value } } : prev)} required />
+                  <textarea value={editModal.form.description} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, description: event.target.value } } : prev)} placeholder="Descripción" />
+                </>
+              )}
+
+              {editModal.type === "consultant" && (
+                <>
+                  <input value={editModal.form.fullName} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, fullName: event.target.value } } : prev)} placeholder="Nombre completo" required />
+                  <input value={editModal.form.email} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, email: event.target.value } } : prev)} placeholder="Correo" />
+                  <select value={editModal.form.role} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, role: event.target.value } } : prev)} required>
+                    {consultantRoleOptions.map((role) => (
+                      <option key={`consultant-edit-${role}`} value={role}>{role}</option>
+                    ))}
+                  </select>
+                  <input type="number" value={editModal.form.hourlyRate} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, hourlyRate: event.target.value } } : prev)} placeholder="Tarifa por hora" />
+                  <label className="check"><input type="checkbox" checked={editModal.form.active} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, active: event.target.checked } } : prev)} />Activo</label>
+                </>
+              )}
+
+              {editModal.type === "expense" && (
+                <>
+                  <select value={editModal.form.projectId} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, projectId: event.target.value } } : prev)} required>
+                    {projects.map((project) => (
+                      <option key={`expense-edit-project-${project.id}`} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                  <input type="date" value={editModal.form.expenseDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, expenseDate: event.target.value } } : prev)} required />
+                  <select value={editModal.form.category} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, category: event.target.value } } : prev)} required>
+                    {expenseCategoryOptions.map((category) => (
+                      <option key={`expense-edit-category-${category}`} value={category}>{category}</option>
+                    ))}
+                  </select>
+                  <input type="number" value={editModal.form.amount} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, amount: event.target.value } } : prev)} required />
+                  <select value={editModal.form.currency} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, currency: event.target.value } } : prev)} required>
+                    {currencyOptions.map((currency) => (
+                      <option key={`expense-edit-currency-${currency}`} value={currency}>{currency}</option>
+                    ))}
+                  </select>
+                  <textarea value={editModal.form.description} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, description: event.target.value } } : prev)} placeholder="Descripción" />
+                </>
+              )}
+
+              {editModal.type === "forecast" && (
+                <>
+                  <select value={editModal.form.projectId} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, projectId: event.target.value } } : prev)} required>
+                    {projects.map((project) => (
+                      <option key={`forecast-edit-project-${project.id}`} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                  <select value={editModal.form.consultantId} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, consultantId: event.target.value } } : prev)} required>
+                    {consultants.map((consultant) => (
+                      <option key={`forecast-edit-consultant-${consultant.id}`} value={consultant.id}>{consultant.fullName}</option>
+                    ))}
+                  </select>
+                  <input value={editModal.form.period} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, period: event.target.value } } : prev)} required />
+                  <input type="number" value={editModal.form.hoursProjected} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, hoursProjected: event.target.value } } : prev)} required />
+                  <input type="number" value={editModal.form.hourlyRate} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, hourlyRate: event.target.value } } : prev)} placeholder="Tarifa/hora" />
+                  <textarea value={editModal.form.note} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, note: event.target.value } } : prev)} placeholder="Nota" />
+                </>
+              )}
+
+              <div className="modal-actions">
+                <button type="submit">Guardar cambios</button>
+                <button type="button" className="ghost" onClick={() => setEditModal(null)}>Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </main>
   );
