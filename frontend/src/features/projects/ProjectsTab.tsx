@@ -1,0 +1,439 @@
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { PROJECT_STATUS_LABELS, label } from "../../utils/statusLabels";
+import {
+  createProject,
+  deleteProject,
+  updateProject,
+  type Project,
+  type ProjectStatus,
+  type ProjectType,
+  type HealthStatus,
+  type StatsProjectRowEnriched,
+} from "../../services/api";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { SectionLayout } from "../../components/SectionLayout";
+import { downloadCsv } from "../../utils/csv";
+import { backendHealthToResult, HEALTH_CRITERIA_TOOLTIP } from "../../utils/projectHealth";
+
+function RagBadge({ status }: { status: HealthStatus | undefined }) {
+  if (!status) return <span style={{ color: "#888", fontSize: "0.75rem" }}>—</span>;
+  const result = backendHealthToResult(status);
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "0.15rem 0.45rem",
+        borderRadius: "9999px",
+        background: result.color,
+        color: "#fff",
+        fontWeight: 700,
+        fontSize: "0.7rem",
+        letterSpacing: "0.04em",
+      }}
+      title={HEALTH_CRITERIA_TOOLTIP}
+    >
+      {result.label}
+    </span>
+  );
+}
+
+function BudgetBar({ pct }: { pct: number }) {
+  const capped = Math.min(pct, 100);
+  const color = pct > 100 ? "#ef4444" : pct > 90 ? "#f59e0b" : "#22c55e";
+  return (
+    <div style={{ width: "6rem", height: "0.5rem", background: "#e5e7eb", borderRadius: "9999px", overflow: "hidden" }}>
+      <div style={{ width: `${capped}%`, height: "100%", background: color, transition: "width 0.3s" }} />
+    </div>
+  );
+}
+
+const currencyOptions = ["COP", "USD", "EUR", "MXN", "PEN", "CLP"];
+
+function money(value: number, currency = "USD") {
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
+}
+
+function numberish(value: string | null | undefined) {
+  if (!value) return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toDateInput(value: string) {
+  return value.slice(0, 10);
+}
+
+type EditForm = {
+  id: string;
+  name: string;
+  company: string;
+  country: string;
+  currency: string;
+  budget: string;
+  startDate: string;
+  endDate: string;
+  description: string;
+  projectType: ProjectType;
+  status: ProjectStatus;
+  sellPrice: string;
+  sellCurrency: string;
+};
+
+const emptyForm = {
+  name: "",
+  company: "",
+  country: "",
+  currency: "USD",
+  budget: "",
+  startDate: "",
+  endDate: "",
+  description: "",
+  projectType: "TIME_AND_MATERIAL" as ProjectType,
+  status: "ACTIVE" as ProjectStatus,
+  sellPrice: "",
+  sellCurrency: "USD",
+};
+
+export function ProjectsTab({
+  projects,
+  loading,
+  canWrite,
+  onReload,
+  onError,
+  statsProjects,
+  onOpenProject,
+}: {
+  projects: Project[];
+  loading: boolean;
+  canWrite: boolean;
+  onReload: () => Promise<void>;
+  onError: (msg: string) => void;
+  statsProjects?: StatsProjectRowEnriched[];
+  onOpenProject?: (id: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [healthFilter, setHealthFilter] = useState<HealthStatus | "">("");
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+
+  const statsMap = new Map<string, StatsProjectRowEnriched>(
+    (statsProjects ?? []).map((s) => [s.projectId, s]),
+  );
+
+  const filtered = projects.filter((p) => {
+    const matchesSearch =
+      !search.trim() ||
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.company.toLowerCase().includes(search.toLowerCase());
+    const matchesHealth =
+      !healthFilter || statsMap.get(p.id)?.healthStatus === healthFilter;
+    return matchesSearch && matchesHealth;
+  });
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await createProject({
+        ...form,
+        budget: Number(form.budget),
+        sellPrice: form.sellPrice ? Number(form.sellPrice) : undefined,
+      });
+      setForm(emptyForm);
+      await onReload();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo crear proyecto");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleUpdate(e: FormEvent) {
+    e.preventDefault();
+    if (!editForm) return;
+    setEditSubmitting(true);
+    try {
+      await updateProject(editForm.id, {
+        name: editForm.name,
+        company: editForm.company,
+        country: editForm.country,
+        currency: editForm.currency,
+        budget: Number(editForm.budget),
+        startDate: editForm.startDate,
+        endDate: editForm.endDate,
+        description: editForm.description,
+        projectType: editForm.projectType,
+        status: editForm.status,
+        sellPrice: editForm.sellPrice ? Number(editForm.sellPrice) : undefined,
+        sellCurrency: editForm.sellCurrency,
+      });
+      setEditForm(null);
+      await onReload();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo actualizar proyecto");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
+  function handleExport() {
+    downloadCsv(
+      filtered.map((p) => ({
+        nombre: p.name,
+        empresa: p.company,
+        pais: p.country,
+        tipo: p.projectType,
+        estado: p.status,
+        moneda: p.currency,
+        presupuesto: numberish(p.budget).toFixed(2),
+        precioVenta: p.sellPrice ? numberish(p.sellPrice).toFixed(2) : "",
+        monedaVenta: p.sellCurrency,
+        inicio: p.startDate.slice(0, 10),
+        fin: p.endDate.slice(0, 10),
+      })),
+      [
+        { key: "nombre", label: "Nombre" },
+        { key: "empresa", label: "Empresa" },
+        { key: "pais", label: "País" },
+        { key: "tipo", label: "Tipo" },
+        { key: "estado", label: "Estado" },
+        { key: "moneda", label: "Moneda" },
+        { key: "presupuesto", label: "Presupuesto" },
+        { key: "precioVenta", label: "Precio Venta" },
+        { key: "monedaVenta", label: "Moneda Venta" },
+        { key: "inicio", label: "Fecha Inicio" },
+        { key: "fin", label: "Fecha Fin" },
+      ],
+      "proyectos",
+    );
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteProject(deleteTarget.id);
+      setDeleteTarget(null);
+      await onReload();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo eliminar proyecto");
+    }
+  }
+
+  return (
+    <>
+      <SectionLayout
+        title="Proyectos"
+        newLabel="+ Nuevo proyecto"
+        canWrite={canWrite}
+        onExport={handleExport}
+        exportDisabled={filtered.length === 0}
+        form={
+          <form onSubmit={(e) => void handleCreate(e)} className="form-inline">
+            <input placeholder="Nombre" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required />
+            <input placeholder="Empresa" value={form.company} onChange={(e) => setForm((p) => ({ ...p, company: e.target.value }))} required />
+            <input placeholder="País" value={form.country} onChange={(e) => setForm((p) => ({ ...p, country: e.target.value }))} required />
+            <select value={form.currency} onChange={(e) => setForm((p) => ({ ...p, currency: e.target.value }))} required>
+              {currencyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input type="number" placeholder="Presupuesto (costo)" value={form.budget} onChange={(e) => setForm((p) => ({ ...p, budget: e.target.value }))} required />
+            <select value={form.projectType} onChange={(e) => setForm((p) => ({ ...p, projectType: e.target.value as ProjectType }))}>
+              <option value="TIME_AND_MATERIAL">Tiempo y Material</option>
+              <option value="FIXED_PRICE">Precio Fijo</option>
+              <option value="STAFFING">Staffing</option>
+            </select>
+            <select value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as ProjectStatus }))}>
+              <option value="ACTIVE">Activo</option>
+              <option value="PAUSED">Pausado</option>
+              <option value="CLOSED">Cerrado</option>
+            </select>
+            <input type="number" step="0.01" placeholder="Precio de venta (opcional)" value={form.sellPrice} onChange={(e) => setForm((p) => ({ ...p, sellPrice: e.target.value }))} />
+            <select value={form.sellCurrency} onChange={(e) => setForm((p) => ({ ...p, sellCurrency: e.target.value }))}>
+              {currencyOptions.map((c) => <option key={`sell-${c}`} value={c}>{`Venta: ${c}`}</option>)}
+            </select>
+            <input type="date" value={form.startDate} onChange={(e) => setForm((p) => ({ ...p, startDate: e.target.value }))} required />
+            <input type="date" value={form.endDate} onChange={(e) => setForm((p) => ({ ...p, endDate: e.target.value }))} required />
+            <textarea placeholder="Descripción" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+            <button type="submit" disabled={submitting}>{submitting ? "Creando…" : "Crear proyecto"}</button>
+          </form>
+        }
+        table={
+          <>
+            {/* Filters */}
+            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+              <input
+                placeholder="Filtrar por proyecto o empresa"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ flex: "1 1 18rem", minWidth: "12rem" }}
+              />
+              <select
+                value={healthFilter}
+                onChange={(e) => setHealthFilter(e.target.value as HealthStatus | "")}
+                style={{ flex: "0 0 auto", minWidth: "9rem" }}
+              >
+                <option value="">Salud: Todos</option>
+                <option value="GREEN">Verde (OK)</option>
+                <option value="YELLOW">Amarillo (WARN)</option>
+                <option value="RED">Rojo (CRIT)</option>
+              </select>
+            </div>
+
+            {loading ? (
+              <p className="loading">Cargando...</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Salud</th>
+                      <th>Nombre</th>
+                      <th>Empresa</th>
+                      <th>Tipo</th>
+                      <th>Estado</th>
+                      <th>Presupuesto</th>
+                      <th>Uso</th>
+                      <th>Avance</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((project) => {
+                      const stats = statsMap.get(project.id);
+                      return (
+                        <tr key={project.id}>
+                          <td><RagBadge status={stats?.healthStatus} /></td>
+                          <td>{project.name}</td>
+                          <td>{project.company}</td>
+                          <td style={{ fontSize: "0.75rem" }}>
+                            {project.projectType === "TIME_AND_MATERIAL" ? "T&M" :
+                             project.projectType === "FIXED_PRICE" ? "FP" : "Staff"}
+                          </td>
+                          <td><span className={`pill ${project.status === "ACTIVE" ? "ok" : project.status === "PAUSED" ? "warn" : "neutral"}`}>{label(PROJECT_STATUS_LABELS, project.status)}</span></td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {stats
+                              ? money(stats.budget, stats.displayCurrency)
+                              : money(numberish(project.budget), project.currency)}
+                          </td>
+                          <td>
+                            {stats ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+                                <BudgetBar pct={stats.usedBudgetPercent} />
+                                <span style={{ fontSize: "0.68rem", color: "#6b7280" }}>{stats.usedBudgetPercent.toFixed(1)}%</span>
+                              </div>
+                            ) : "—"}
+                          </td>
+                          <td>
+                            {stats ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+                                <BudgetBar pct={stats.completionPct} />
+                                <span style={{ fontSize: "0.68rem", color: "#6b7280" }}>{stats.completionPct.toFixed(0)}%</span>
+                              </div>
+                            ) : "—"}
+                          </td>
+                          <td>
+                            <div className="inline-actions">
+                              {onOpenProject && (
+                                <button type="button" onClick={() => onOpenProject(project.id)}>
+                                  Ver
+                                </button>
+                              )}
+                              {canWrite && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="ghost"
+                                    onClick={() =>
+                                      setEditForm({
+                                        id: project.id,
+                                        name: project.name,
+                                        company: project.company,
+                                        country: project.country,
+                                        currency: project.currency,
+                                        budget: String(numberish(project.budget)),
+                                        startDate: toDateInput(project.startDate),
+                                        endDate: toDateInput(project.endDate),
+                                        description: project.description || "",
+                                        projectType: project.projectType ?? "TIME_AND_MATERIAL",
+                                        status: project.status ?? "ACTIVE",
+                                        sellPrice: project.sellPrice ? String(numberish(project.sellPrice)) : "",
+                                        sellCurrency: project.sellCurrency ?? "USD",
+                                      })
+                                    }
+                                  >
+                                    Editar
+                                  </button>
+                                  <button type="button" className="ghost" onClick={() => setDeleteTarget(project)}>
+                                    Eliminar
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        }
+      />
+
+      {editForm && (
+        <div className="modal-overlay" onClick={() => setEditForm(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Editar proyecto</h3>
+              <button type="button" className="ghost" onClick={() => setEditForm(null)}>Cerrar</button>
+            </div>
+            <form className="form-grid" onSubmit={(e) => void handleUpdate(e)}>
+              <input value={editForm.name} onChange={(e) => setEditForm((p) => p && { ...p, name: e.target.value })} placeholder="Nombre" required />
+              <input value={editForm.company} onChange={(e) => setEditForm((p) => p && { ...p, company: e.target.value })} placeholder="Empresa" required />
+              <input value={editForm.country} onChange={(e) => setEditForm((p) => p && { ...p, country: e.target.value })} placeholder="País" required />
+              <select value={editForm.currency} onChange={(e) => setEditForm((p) => p && { ...p, currency: e.target.value })} required>
+                {currencyOptions.map((c) => <option key={`edit-${c}`} value={c}>{c}</option>)}
+              </select>
+              <input type="number" value={editForm.budget} onChange={(e) => setEditForm((p) => p && { ...p, budget: e.target.value })} placeholder="Presupuesto (costo)" required />
+              <select value={editForm.projectType} onChange={(e) => setEditForm((p) => p && { ...p, projectType: e.target.value as ProjectType })}>
+                <option value="TIME_AND_MATERIAL">Tiempo y Material</option>
+                <option value="FIXED_PRICE">Precio Fijo</option>
+                <option value="STAFFING">Staffing</option>
+              </select>
+              <select value={editForm.status} onChange={(e) => setEditForm((p) => p && { ...p, status: e.target.value as ProjectStatus })}>
+                <option value="ACTIVE">Activo</option>
+                <option value="PAUSED">Pausado</option>
+                <option value="CLOSED">Cerrado</option>
+              </select>
+              <input type="number" step="0.01" value={editForm.sellPrice} onChange={(e) => setEditForm((p) => p && { ...p, sellPrice: e.target.value })} placeholder="Precio de venta (opcional)" />
+              <select value={editForm.sellCurrency} onChange={(e) => setEditForm((p) => p && { ...p, sellCurrency: e.target.value })}>
+                {currencyOptions.map((c) => <option key={`edit-sell-${c}`} value={c}>{`Moneda venta: ${c}`}</option>)}
+              </select>
+              <input type="date" value={editForm.startDate} onChange={(e) => setEditForm((p) => p && { ...p, startDate: e.target.value })} required />
+              <input type="date" value={editForm.endDate} onChange={(e) => setEditForm((p) => p && { ...p, endDate: e.target.value })} required />
+              <textarea value={editForm.description} onChange={(e) => setEditForm((p) => p && { ...p, description: e.target.value })} placeholder="Descripción" />
+              <div className="modal-actions">
+                <button type="submit" disabled={editSubmitting}>{editSubmitting ? "Guardando…" : "Guardar cambios"}</button>
+                <button type="button" className="ghost" onClick={() => setEditForm(null)}>Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Eliminar proyecto"
+        message={`¿Eliminar el proyecto "${deleteTarget?.name}"? Esta acción no se puede deshacer.`}
+        confirmLabel="Eliminar"
+        danger
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </>
+  );
+}

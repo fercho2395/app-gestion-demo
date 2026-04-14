@@ -3,6 +3,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, authorize } from "../../auth/guard.js";
 import { prisma } from "../../infra/prisma.js";
+import { writeAudit } from "../../utils/audit.js";
+import { buildRateMap } from "../../utils/currency.js";
+import { calculateProfitability } from "../../utils/financial.js";
 
 const projectPayloadSchema = z.object({
   name: z.string().trim().min(1),
@@ -17,6 +20,10 @@ const projectPayloadSchema = z.object({
   startDate: z.coerce.date(),
   endDate: z.coerce.date(),
   description: z.string().trim().optional(),
+  projectType: z.enum(["FIXED_PRICE", "TIME_AND_MATERIAL", "STAFFING"]).default("TIME_AND_MATERIAL"),
+  status: z.enum(["ACTIVE", "PAUSED", "CLOSED"]).default("ACTIVE"),
+  sellPrice: z.coerce.number().positive().optional(),
+  sellCurrency: z.string().trim().toUpperCase().length(3).default("USD"),
 });
 
 const listProjectsQuerySchema = z.object({
@@ -84,7 +91,20 @@ export async function projectsRoutes(app: FastifyInstance) {
         startDate: body.startDate,
         endDate: body.endDate,
         description: body.description,
+        projectType: body.projectType,
+        status: body.status,
+        sellPrice: body.sellPrice,
+        sellCurrency: body.sellCurrency,
       },
+    });
+
+    await writeAudit(prisma, {
+      entity: "Project",
+      entityId: project.id,
+      action: "CREATE",
+      changedBy: request.authUser?.email ?? "system",
+      after: project as unknown as Record<string, unknown>,
+      request,
     });
 
       return reply.status(201).send({ data: project });
@@ -139,7 +159,21 @@ export async function projectsRoutes(app: FastifyInstance) {
         startDate: body.startDate,
         endDate: body.endDate,
         description: body.description,
+        projectType: body.projectType,
+        status: body.status,
+        sellPrice: body.sellPrice,
+        sellCurrency: body.sellCurrency,
       },
+    });
+
+    await writeAudit(prisma, {
+      entity: "Project",
+      entityId: project.id,
+      action: "UPDATE",
+      changedBy: request.authUser?.email ?? "system",
+      before: existing as unknown as Record<string, unknown>,
+      after: project as unknown as Record<string, unknown>,
+      request,
     });
 
       return { data: project };
@@ -159,8 +193,96 @@ export async function projectsRoutes(app: FastifyInstance) {
       return reply.status(404).send({ message: "Project not found" });
     }
 
-      await prisma.project.delete({ where: { id } });
+    await prisma.project.delete({ where: { id } });
+
+    await writeAudit(prisma, {
+      entity: "Project",
+      entityId: id,
+      action: "DELETE",
+      changedBy: request.authUser?.email ?? "system",
+      before: existing as unknown as Record<string, unknown>,
+      request,
+    });
+
       return reply.status(204).send();
+    },
+  );
+
+  // GET /api/projects/:id/profitability
+  app.get(
+    "/:id/profitability",
+    {
+      preHandler: [authenticate, authorize([AppRole.ADMIN, AppRole.PM, AppRole.FINANCE, AppRole.VIEWER])],
+    },
+    async (request, reply) => {
+      const { id } = projectParamsSchema.parse(request.params);
+      const { baseCurrency: qBase } = z.object({ baseCurrency: z.string().trim().toUpperCase().length(3).optional() }).parse(request.query);
+
+      const project = await prisma.project.findUnique({
+        where: { id },
+        include: {
+          timeEntries: {
+            where: { status: "APPROVED" },
+            include: { consultant: { select: { hourlyRate: true, rateCurrency: true } } },
+          },
+          expenses: true,
+          forecasts: {
+            include: { consultant: { select: { hourlyRate: true, rateCurrency: true } } },
+          },
+          revenueEntries: true,
+        },
+      });
+
+      if (!project) return reply.status(404).send({ message: "Project not found" });
+
+      const fxConfigs = await prisma.fxConfig.findMany();
+      const baseCurrency = qBase ?? fxConfigs[0]?.baseCode ?? "USD";
+      const rateMap = buildRateMap(fxConfigs);
+
+      const profitability = calculateProfitability({
+        budget: Number(project.budget),
+        budgetCurrency: project.currency,
+        sellPrice: project.sellPrice ? Number(project.sellPrice) : null,
+        sellCurrency: project.sellCurrency,
+        revenueEntries: project.revenueEntries.map((r) => ({ amount: Number(r.amount), currency: r.currency })),
+        approvedTimeEntries: project.timeEntries.map((e) => ({
+          consultantId: e.consultantId,
+          hours: Number(e.hours),
+          workDate: e.workDate,
+          status: "APPROVED" as const,
+          hourlyRate: e.consultant.hourlyRate ? Number(e.consultant.hourlyRate) : null,
+          rateCurrency: e.consultant.rateCurrency,
+        })),
+        expenses: project.expenses.map((e) => ({ amount: Number(e.amount), currency: e.currency })),
+        forecasts: project.forecasts.map((f) => ({
+          consultantId: f.consultantId,
+          hoursProjected: Number(f.hoursProjected),
+          hourlyRate: f.hourlyRate ? Number(f.hourlyRate) : null,
+          sellRate: f.sellRate ? Number(f.sellRate) : null,
+          currency: f.currency,
+          period: f.period,
+          consultant: {
+            hourlyRate: f.consultant.hourlyRate ? Number(f.consultant.hourlyRate) : null,
+            rateCurrency: f.consultant.rateCurrency,
+          },
+        })),
+        fxConfigs: Array.from(rateMap.entries()).map(([key, rate]) => {
+          const [baseCode, quoteCode] = key.split("_");
+          return { baseCode, quoteCode, rate };
+        }),
+        baseCurrency,
+      });
+
+      return {
+        data: {
+          projectId: project.id,
+          projectName: project.name,
+          projectType: project.projectType,
+          currency: project.currency,
+          baseCurrency,
+          ...profitability,
+        },
+      };
     },
   );
 }

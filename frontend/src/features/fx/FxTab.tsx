@@ -1,0 +1,195 @@
+import { useState } from "react";
+import type { FormEvent } from "react";
+import { deleteFxRate, listFxHistory, upsertFxRate, type FxConfig, type FxRateHistory } from "../../services/api";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { formatDate } from "../../utils/formatDate";
+
+const currencyOptions = ["COP", "USD", "EUR", "MXN", "PEN", "CLP"];
+
+const emptyForm = { baseCode: "USD", quoteCode: "COP", rate: "" };
+
+export function FxTab({
+  fxConfigs,
+  loading,
+  canWrite,
+  onReload,
+  onError,
+}: {
+  fxConfigs: FxConfig[];
+  loading: boolean;
+  canWrite: boolean;
+  onReload: () => Promise<void>;
+  onError: (msg: string) => void;
+}) {
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<FxConfig | null>(null);
+  const [historyFilter, setHistoryFilter] = useState({ baseCode: "", quoteCode: "", from: "", to: "" });
+  const [history, setHistory] = useState<FxRateHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await upsertFxRate({ baseCode: form.baseCode, quoteCode: form.quoteCode, rate: Number(form.rate) });
+      setForm(emptyForm);
+      await onReload();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo guardar la tasa");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteFxRate(deleteTarget.id);
+      setDeleteTarget(null);
+      await onReload();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo eliminar la tasa");
+    }
+  }
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    try {
+      const data = await listFxHistory({
+        baseCode: historyFilter.baseCode || undefined,
+        quoteCode: historyFilter.quoteCode || undefined,
+        from: historyFilter.from || undefined,
+        to: historyFilter.to || undefined,
+      });
+      setHistory(data);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo cargar el historial");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  return (
+    <section className="grid two-col">
+      <article className="card">
+        <h3>Configurar tasa de cambio</h3>
+        {canWrite ? (
+          <form onSubmit={(e) => void handleSubmit(e)} className="form-grid">
+            <select value={form.baseCode} onChange={(e) => setForm((p) => ({ ...p, baseCode: e.target.value }))}>
+              {currencyOptions.map((c) => <option key={`fx-base-${c}`} value={c}>{`Base: ${c}`}</option>)}
+            </select>
+            <select value={form.quoteCode} onChange={(e) => setForm((p) => ({ ...p, quoteCode: e.target.value }))}>
+              {currencyOptions.map((c) => <option key={`fx-quote-${c}`} value={c}>{`Destino: ${c}`}</option>)}
+            </select>
+            <input
+              type="number"
+              step="0.000001"
+              min="0.000001"
+              placeholder={`1 ${form.baseCode} = ? ${form.quoteCode}`}
+              value={form.rate}
+              onChange={(e) => setForm((p) => ({ ...p, rate: e.target.value }))}
+              required
+            />
+            <button type="submit" disabled={submitting}>{submitting ? "Guardando…" : "Guardar tasa"}</button>
+          </form>
+        ) : (
+          <p className="fx-note">Solo ADMIN y FINANCE pueden modificar tasas.</p>
+        )}
+        <p className="fx-note">La tasa indica cuántas unidades de la moneda destino equivalen a 1 unidad de la moneda base. Ej: 1 USD = 4200 COP</p>
+      </article>
+
+      <article className="card">
+        <h3>Tasas configuradas</h3>
+        {loading ? (
+          <p className="loading">Cargando...</p>
+        ) : fxConfigs.length === 0 ? (
+          <p className="fx-note">No hay tasas configuradas. Agrega la primera para habilitar la consolidación multimoneda.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Par</th>
+                  <th>Tasa</th>
+                  <th>Inversa</th>
+                  <th>Actualizado</th>
+                  {canWrite && <th>Acciones</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {fxConfigs.map((fx) => (
+                  <tr key={fx.id}>
+                    <td><span className="pill neutral">{fx.baseCode}/{fx.quoteCode}</span></td>
+                    <td>{`1 ${fx.baseCode} = ${Number(fx.rate).toLocaleString("es-CO", { maximumFractionDigits: 6 })} ${fx.quoteCode}`}</td>
+                    <td>{`1 ${fx.quoteCode} = ${(1 / Number(fx.rate)).toLocaleString("es-CO", { maximumFractionDigits: 6 })} ${fx.baseCode}`}</td>
+                    <td>{formatDate(fx.updatedAt)}</td>
+                    {canWrite && (
+                      <td>
+                        <button type="button" className="ghost" onClick={() => setDeleteTarget(fx)}>Eliminar</button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
+
+      <article className="card" style={{ gridColumn: "1 / -1" }}>
+        <h3>Historial de tasas</h3>
+        <div className="form-grid filters-grid" style={{ marginBottom: "0.75rem" }}>
+          <select value={historyFilter.baseCode} onChange={(e) => setHistoryFilter((p) => ({ ...p, baseCode: e.target.value }))}>
+            <option value="">Todas las bases</option>
+            {currencyOptions.map((c) => <option key={`hist-base-${c}`} value={c}>{c}</option>)}
+          </select>
+          <select value={historyFilter.quoteCode} onChange={(e) => setHistoryFilter((p) => ({ ...p, quoteCode: e.target.value }))}>
+            <option value="">Todos los destinos</option>
+            {currencyOptions.map((c) => <option key={`hist-quote-${c}`} value={c}>{c}</option>)}
+          </select>
+          <input type="date" value={historyFilter.from} onChange={(e) => setHistoryFilter((p) => ({ ...p, from: e.target.value }))} />
+          <input type="date" value={historyFilter.to} onChange={(e) => setHistoryFilter((p) => ({ ...p, to: e.target.value }))} />
+          <button type="button" onClick={() => void loadHistory()}>{historyLoading ? "Cargando…" : "Consultar historial"}</button>
+        </div>
+        {history.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Par</th>
+                  <th>Tasa</th>
+                  <th>Fecha efectiva</th>
+                  <th>Fuente</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => (
+                  <tr key={h.id}>
+                    <td><span className="pill neutral">{h.baseCode}/{h.quoteCode}</span></td>
+                    <td>{Number(h.rate).toLocaleString("es-CO", { maximumFractionDigits: 6 })}</td>
+                    <td>{formatDate(h.effectiveDate)}</td>
+                    <td>{h.source || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!historyLoading && history.length === 0 && (
+          <p className="fx-note">Aplica filtros y presiona "Consultar historial" para ver registros.</p>
+        )}
+      </article>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Eliminar tasa"
+        message={`¿Eliminar la tasa ${deleteTarget?.baseCode}/${deleteTarget?.quoteCode}?`}
+        confirmLabel="Eliminar"
+        danger
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </section>
+  );
+}

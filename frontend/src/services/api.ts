@@ -33,6 +33,9 @@ export type HealthResponse = {
   timestamp: string;
 };
 
+export type ProjectType = "FIXED_PRICE" | "TIME_AND_MATERIAL" | "STAFFING";
+export type ProjectStatus = "ACTIVE" | "PAUSED" | "CLOSED";
+
 export type Project = {
   id: string;
   name: string;
@@ -43,6 +46,10 @@ export type Project = {
   startDate: string;
   endDate: string;
   description: string | null;
+  projectType: ProjectType;
+  status: ProjectStatus;
+  sellPrice: string | null;
+  sellCurrency: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +60,9 @@ export type Consultant = {
   email: string | null;
   role: string;
   hourlyRate: string | null;
+  rateCurrency: string;
+  country: string | null;
+  costPerMonth: string | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -94,9 +104,12 @@ export type Forecast = {
   id: string;
   projectId: string;
   consultantId: string;
-  period: string;
+  startDate: string;   // ISO "YYYY-MM-DD"
+  endDate: string;     // ISO "YYYY-MM-DD"
   hoursProjected: string;
   hourlyRate: string | null;
+  sellRate: string | null;
+  currency: string;
   note: string | null;
   createdAt: string;
   updatedAt: string;
@@ -105,25 +118,91 @@ export type Forecast = {
   projectedCost?: number;
 };
 
+export type RevenueEntry = {
+  id: string;
+  projectId: string;
+  entryDate: string;
+  amount: string;
+  currency: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+  project?: Pick<Project, "id" | "name" | "currency">;
+};
+
+export type FxConfig = {
+  id: string;
+  baseCode: string;
+  quoteCode: string;
+  rate: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AlertLevel = "ok" | "warning" | "exceeded";
+
+export type StatsProjectRow = {
+  projectId: string;
+  projectName: string;
+  company: string;
+  currency: string;
+  projectType: ProjectType;
+  status: ProjectStatus;
+  displayCurrency: string;
+  // Budget
+  budget: number;
+  spent: number;
+  laborCostActual?: number;
+  expensesActual?: number;
+  remainingBudget: number;
+  usedBudgetPercent: number;
+  projectedCost: number;
+  projectedTotal: number;
+  projectedPct: number;
+  estimateAtCompletion: number;
+  budgetVariance: number;
+  // Revenue & margin
+  contractValue: number;
+  revenueRecognized: number;
+  grossMarginActual: number;
+  grossMarginActualPct: number | null;
+  grossMarginProjected: number;
+  grossMarginProjectedPct: number | null;
+  // Hours
+  totalHours: number;
+  approvedHours: number;
+  // Alert
+  alertLevel: AlertLevel;
+};
+
 export type StatsOverview = {
-  projects: Array<{
-    projectId: string;
-    projectName: string;
-    company: string;
-    currency: string;
-    budget: number;
-    spent: number;
-    remainingBudget: number;
-    usedBudgetPercent: number;
-    totalHours: number;
-    approvedHours: number;
-  }>;
+  baseCurrency: string;
+  projects: StatsProjectRowEnriched[];
   totals: {
     budget: number;
     spent: number;
+    laborCostActual?: number;
+    expensesActual?: number;
+    projectedCost: number;
+    contractValue: number;
+    revenueRecognized: number;
+    grossMarginActual: number;
     totalHours: number;
     approvedHours: number;
+    alertCount: number;
+    byHealth?: { GREEN: number; YELLOW: number; RED: number };
+    avgCpi?: number | null;
+    avgSpi?: number | null;
   };
+  byProjectType?: Record<string, {
+    count: number;
+    budget: number;
+    spent: number;
+    revenueRecognized: number;
+    grossMarginActual: number;
+    grossMarginActualPct: number | null;
+    approvedHours: number;
+  }>;
 };
 
 function ensureApiUrl() {
@@ -229,6 +308,10 @@ export async function createProject(payload: {
   startDate: string;
   endDate: string;
   description?: string;
+  projectType?: ProjectType;
+  status?: ProjectStatus;
+  sellPrice?: number;
+  sellCurrency?: string;
 }): Promise<Project> {
   const response = await request<ApiEnvelope<Project>>("/api/projects", "POST", payload);
   return response.data;
@@ -245,6 +328,10 @@ export async function updateProject(
     startDate: string;
     endDate: string;
     description?: string;
+    projectType?: ProjectType;
+    status?: ProjectStatus;
+    sellPrice?: number;
+    sellCurrency?: string;
   },
 ): Promise<Project> {
   const response = await request<ApiEnvelope<Project>>(`/api/projects/${id}`, "PUT", payload);
@@ -265,6 +352,9 @@ export async function createConsultant(payload: {
   email?: string;
   role: string;
   hourlyRate?: number;
+  rateCurrency?: string;
+  country?: string;
+  costPerMonth?: number;
   active: boolean;
 }): Promise<Consultant> {
   const response = await request<ApiEnvelope<Consultant>>("/api/consultants", "POST", payload);
@@ -278,6 +368,9 @@ export async function updateConsultant(
     email?: string;
     role: string;
     hourlyRate?: number;
+    rateCurrency?: string;
+    country?: string;
+    costPerMonth?: number;
     active: boolean;
   },
 ): Promise<Consultant> {
@@ -364,9 +457,12 @@ export async function listForecasts(): Promise<Forecast[]> {
 export async function createForecast(payload: {
   projectId: string;
   consultantId: string;
-  period: string;
+  startDate: string;
+  endDate: string;
   hoursProjected: number;
   hourlyRate?: number;
+  sellRate?: number;
+  currency?: string;
   note?: string;
 }): Promise<Forecast> {
   const response = await request<ApiEnvelope<Forecast>>("/api/forecasts", "POST", payload);
@@ -378,9 +474,12 @@ export async function updateForecast(
   payload: {
     projectId: string;
     consultantId: string;
-    period: string;
+    startDate: string;
+    endDate: string;
     hoursProjected: number;
     hourlyRate?: number;
+    sellRate?: number;
+    currency?: string;
     note?: string;
   },
 ): Promise<Forecast> {
@@ -392,7 +491,854 @@ export async function deleteForecast(id: string): Promise<void> {
   await request<void>(`/api/forecasts/${id}`, "DELETE");
 }
 
-export async function getStatsOverview(): Promise<StatsOverview> {
-  const response = await request<ApiEnvelope<StatsOverview>>("/api/stats/overview");
+export async function getStatsOverview(baseCurrency?: string): Promise<StatsOverview> {
+  const query = baseCurrency ? `?baseCurrency=${baseCurrency}` : "";
+  const response = await request<ApiEnvelope<StatsOverview>>(`/api/stats/overview${query}`);
+  return response.data;
+}
+
+export async function listFxConfigs(): Promise<FxConfig[]> {
+  const response = await request<ApiEnvelope<FxConfig[]>>("/api/fx");
+  return response.data;
+}
+
+export async function upsertFxRate(payload: {
+  baseCode: string;
+  quoteCode: string;
+  rate: number;
+}): Promise<FxConfig> {
+  const response = await request<ApiEnvelope<FxConfig>>("/api/fx", "PUT", payload);
+  return response.data;
+}
+
+export async function deleteFxRate(id: string): Promise<void> {
+  await request<void>(`/api/fx/${id}`, "DELETE");
+}
+
+export async function listRevenueEntries(projectId?: string): Promise<RevenueEntry[]> {
+  const query = projectId ? `?projectId=${projectId}` : "";
+  const response = await request<ApiEnvelope<RevenueEntry[]>>(`/api/revenue${query}`);
+  return response.data;
+}
+
+export async function createRevenueEntry(payload: {
+  projectId: string;
+  entryDate: string;
+  amount: number;
+  currency: string;
+  description?: string;
+}): Promise<RevenueEntry> {
+  const response = await request<ApiEnvelope<RevenueEntry>>("/api/revenue", "POST", payload);
+  return response.data;
+}
+
+export async function updateRevenueEntry(
+  id: string,
+  payload: {
+    projectId: string;
+    entryDate: string;
+    amount: number;
+    currency: string;
+    description?: string;
+  },
+): Promise<RevenueEntry> {
+  const response = await request<ApiEnvelope<RevenueEntry>>(`/api/revenue/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function deleteRevenueEntry(id: string): Promise<void> {
+  await request<void>(`/api/revenue/${id}`, "DELETE");
+}
+
+// ─── Capacity ──────────────────────────────────────────────────────────────────
+
+export type AvailabilityStatus = "FREE" | "PARTIAL" | "FULL" | "OVERLOADED";
+
+export type ActiveAssignment = {
+  assignmentId: string;
+  projectId: string;
+  projectName: string;
+  startDate: string;
+  endDate: string;
+  allocationMode: "PERCENTAGE" | "HOURS";
+  allocationPct: number | null;
+  hoursPerPeriod: number | null;
+  status: string;
+};
+
+export type CapacityConsultantRow = {
+  consultantId: string;
+  fullName: string;
+  role: string;
+  seniority: string | null;
+  country: string | null;
+  skills: string[];
+  capacityHours: number;
+  committedHours: number;
+  availableHours: number;
+  utilizationPct: number;
+  availabilityStatus: AvailabilityStatus;
+  nextAvailableDate: string | null;
+  activeAssignments: ActiveAssignment[];
+};
+
+export type CapacityOverview = {
+  period: { from: string; to: string };
+  consultants: CapacityConsultantRow[];
+  summary: {
+    totalConsultants: number;
+    freeCount: number;
+    partialCount: number;
+    fullCount: number;
+    overloadedCount: number;
+    totalCapacityHours: number;
+    totalCommittedHours: number;
+    utilizationPct: number;
+  };
+};
+
+export type ReleasingEntry = {
+  assignmentId: string;
+  consultantId: string;
+  consultant: {
+    id: string;
+    fullName: string;
+    role: string;
+    country: string | null;
+    seniority: string | null;
+    skills: string[];
+  };
+  projectId: string;
+  project: { id: string; name: string };
+  endDate: string;
+  daysUntilRelease: number;
+  allocationPct: number | null;
+};
+
+export async function getCapacityOverview(params?: {
+  from?: string;
+  to?: string;
+  country?: string;
+  skill?: string;
+  seniority?: string;
+  status?: AvailabilityStatus;
+  minAvailableHours?: number;
+}): Promise<CapacityOverview> {
+  const query = new URLSearchParams();
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  if (params?.country) query.set("country", params.country);
+  if (params?.skill) query.set("skill", params.skill);
+  if (params?.seniority) query.set("seniority", params.seniority);
+  if (params?.status) query.set("status", params.status);
+  if (params?.minAvailableHours != null) query.set("minAvailableHours", String(params.minAvailableHours));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<CapacityOverview>>(`/api/capacity/overview${suffix}`);
+  return response.data;
+}
+
+export async function getCapacityReleasing(within = 30): Promise<ReleasingEntry[]> {
+  const response = await request<ApiEnvelope<ReleasingEntry[]>>(`/api/capacity/releasing?within=${within}`);
+  return response.data;
+}
+
+// ─── Assignments ───────────────────────────────────────────────────────────────
+
+export type AllocationMode = "PERCENTAGE" | "HOURS";
+export type AssignmentStatus = "PLANNED" | "ACTIVE" | "PARTIAL" | "COMPLETED" | "CANCELLED";
+export type BlockType = "VACATION" | "SICK_LEAVE" | "NATIONAL_HOLIDAY" | "INTERNAL_BENCH" | "TRAINING" | "OTHER";
+
+export type Assignment = {
+  id: string;
+  projectId: string;
+  consultantId: string;
+  startDate: string;
+  endDate: string;
+  allocationMode: AllocationMode;
+  allocationPct: number | null;
+  hoursPerPeriod: number | null;
+  periodUnit: string | null;
+  status: AssignmentStatus;
+  role: string | null;
+  note: string | null;
+  project?: { id: string; name: string; company: string; currency: string };
+  consultant?: { id: string; fullName: string; role: string; country: string | null };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConsultantBlock = {
+  id: string;
+  consultantId: string;
+  startDate: string;
+  endDate: string;
+  blockType: BlockType;
+  note: string | null;
+  createdAt: string;
+};
+
+export type ProjectCapacityConsultant = {
+  consultantId: string;
+  fullName: string;
+  role: string;
+  seniority: string | null;
+  country: string | null;
+  assignment: {
+    id: string;
+    startDate: string;
+    endDate: string;
+    allocationMode: AllocationMode;
+    allocationPct: number | null;
+    hoursPerPeriod: number | null;
+    periodUnit: string | null;
+    status: AssignmentStatus;
+    role: string | null;
+  };
+  capacityHours: number;
+  committedHours: number;
+  utilizationPct: number;
+  estimatedCost: number;
+  costCurrency: string;
+};
+
+export type ProjectCapacity = {
+  project: { id: string; name: string; startDate: string; endDate: string; status: string };
+  period: { from: string; to: string };
+  consultants: ProjectCapacityConsultant[];
+  summary: { totalConsultants: number; totalCommittedHours: number; totalEstimatedCost: number };
+};
+
+export type ProjectCapacitySummary = {
+  projectId: string;
+  projectName: string;
+  projectStatus: string;
+  assignedConsultants: number;
+  totalCommittedHours: number;
+  totalEstimatedCost: number;
+  consultants: { consultantId: string; fullName: string; committedHours: number; estimatedCost: number; currency: string }[];
+};
+
+type AssignmentPayload = {
+  projectId: string;
+  consultantId: string;
+  startDate: string;
+  endDate: string;
+  allocationMode: AllocationMode;
+  allocationPct?: number;
+  hoursPerPeriod?: number;
+  periodUnit?: "week" | "month";
+  role?: string;
+  note?: string;
+};
+
+export async function listAssignments(params?: {
+  consultantId?: string;
+  projectId?: string;
+  status?: AssignmentStatus;
+  from?: string;
+  to?: string;
+}): Promise<Assignment[]> {
+  const query = new URLSearchParams();
+  if (params?.consultantId) query.set("consultantId", params.consultantId);
+  if (params?.projectId) query.set("projectId", params.projectId);
+  if (params?.status) query.set("status", params.status);
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<Assignment[]>>(`/api/assignments${suffix}`);
+  return response.data;
+}
+
+export async function createAssignment(payload: AssignmentPayload): Promise<Assignment> {
+  const response = await request<ApiEnvelope<Assignment>>("/api/assignments", "POST", payload);
+  return response.data;
+}
+
+export async function updateAssignment(id: string, payload: AssignmentPayload): Promise<Assignment> {
+  const response = await request<ApiEnvelope<Assignment>>(`/api/assignments/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function cancelAssignment(id: string): Promise<Assignment> {
+  const response = await request<ApiEnvelope<Assignment>>(`/api/assignments/${id}/cancel`, "PATCH");
+  return response.data;
+}
+
+export async function completeAssignment(id: string): Promise<Assignment> {
+  const response = await request<ApiEnvelope<Assignment>>(`/api/assignments/${id}/complete`, "PATCH");
+  return response.data;
+}
+
+export async function deleteAssignment(id: string): Promise<void> {
+  await request<void>(`/api/assignments/${id}`, "DELETE");
+}
+
+export async function listConsultantBlocks(consultantId: string): Promise<ConsultantBlock[]> {
+  const response = await request<ApiEnvelope<ConsultantBlock[]>>(`/api/consultants/${consultantId}/blocks`);
+  return response.data;
+}
+
+export async function createConsultantBlock(
+  consultantId: string,
+  payload: { startDate: string; endDate: string; blockType: BlockType; note?: string },
+): Promise<ConsultantBlock> {
+  const response = await request<ApiEnvelope<ConsultantBlock>>(`/api/consultants/${consultantId}/blocks`, "POST", payload);
+  return response.data;
+}
+
+export async function deleteConsultantBlock(consultantId: string, blockId: string): Promise<void> {
+  await request<void>(`/api/consultants/${consultantId}/blocks/${blockId}`, "DELETE");
+}
+
+export async function getProjectCapacity(projectId: string, params?: { from?: string; to?: string }): Promise<ProjectCapacity> {
+  const query = new URLSearchParams();
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<ProjectCapacity>>(`/api/capacity/project/${projectId}${suffix}`);
+  return response.data;
+}
+
+export async function getCapacityByProject(params?: { from?: string; to?: string }): Promise<ProjectCapacitySummary[]> {
+  const query = new URLSearchParams();
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<ProjectCapacitySummary[]>>(`/api/capacity/by-project${suffix}`);
+  return response.data;
+}
+
+// ─── Alerts ────────────────────────────────────────────────────────────────────
+
+export type AlertSeverity = "INFO" | "WARNING" | "CRITICAL";
+
+export type AppAlert = {
+  id: string;
+  projectId: string | null;
+  consultantId: string | null;
+  type: string;
+  severity: AlertSeverity;
+  message: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  createdAt: string;
+  project?: { id: string; name: string; company: string } | null;
+  consultant?: { id: string; fullName: string } | null;
+};
+
+export async function listAlerts(params?: {
+  projectId?: string;
+  consultantId?: string;
+  resolved?: boolean;
+}): Promise<AppAlert[]> {
+  const query = new URLSearchParams();
+  if (params?.projectId) query.set("projectId", params.projectId);
+  if (params?.consultantId) query.set("consultantId", params.consultantId);
+  if (params?.resolved !== undefined) query.set("resolved", String(params.resolved));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<AppAlert[]>>(`/api/alerts${suffix}`);
+  return response.data;
+}
+
+export async function resolveAlert(id: string): Promise<AppAlert> {
+  const response = await request<ApiEnvelope<AppAlert>>(`/api/alerts/${id}/resolve`, "PATCH");
+  return response.data;
+}
+
+export async function getAlertsUnreadCount(): Promise<number> {
+  const response = await request<ApiEnvelope<{ count: number }>>("/api/alerts/unread-count");
+  return response.data.count;
+}
+
+export async function runAlertEngine(): Promise<void> {
+  await request<{ message: string }>("/api/alerts/run", "POST");
+}
+
+// ─── Audit ─────────────────────────────────────────────────────────────────────
+
+export type AuditLog = {
+  id: string;
+  entity: string;
+  entityId: string;
+  action: "CREATE" | "UPDATE" | "DELETE";
+  changedBy: string;
+  before: unknown;
+  after: unknown;
+  createdAt: string;
+};
+
+export type AuditLogPage = {
+  data: AuditLog[];
+  meta: { total: number; page: number; pageSize: number; totalPages: number };
+};
+
+export async function listAuditLogs(params?: {
+  entity?: string;
+  entityId?: string;
+  changedBy?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<AuditLogPage> {
+  const query = new URLSearchParams();
+  if (params?.entity) query.set("entity", params.entity);
+  if (params?.entityId) query.set("entityId", params.entityId);
+  if (params?.changedBy) query.set("changedBy", params.changedBy);
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.pageSize) query.set("pageSize", String(params.pageSize));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AuditLogPage>(`/api/audit${suffix}`);
+}
+
+// ─── FX History ───────────────────────────────────────────────────────────────
+
+export type FxRateHistory = {
+  id: string;
+  baseCode: string;
+  quoteCode: string;
+  rate: string;
+  effectiveDate: string;
+  source: string | null;
+  createdAt: string;
+};
+
+export async function listFxHistory(params?: {
+  baseCode?: string;
+  quoteCode?: string;
+  from?: string;
+  to?: string;
+}): Promise<FxRateHistory[]> {
+  const query = new URLSearchParams();
+  if (params?.baseCode) query.set("baseCode", params.baseCode);
+  if (params?.quoteCode) query.set("quoteCode", params.quoteCode);
+  if (params?.from) query.set("from", params.from);
+  if (params?.to) query.set("to", params.to);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const response = await request<ApiEnvelope<FxRateHistory[]>>(`/api/fx/history${suffix}`);
+  return response.data;
+}
+
+// ─── PMO / PMP entities ────────────────────────────────────────────────────────
+
+export type HealthStatus = "GREEN" | "YELLOW" | "RED";
+export type ProjectPhase = "INITIATION" | "PLANNING" | "EXECUTION" | "MONITORING" | "CLOSING";
+export type MilestoneStatus = "PLANNED" | "IN_PROGRESS" | "COMPLETED" | "DELAYED" | "CANCELLED";
+export type RiskStatus = "OPEN" | "MITIGATED" | "ACCEPTED" | "CLOSED";
+export type IssueSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type IssueStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+export type ChangeRequestType = "SCOPE" | "BUDGET" | "SCHEDULE" | "OTHER";
+export type ChangeRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export type EVMResult = {
+  ev: number | null;
+  pv: number | null;
+  ac: number;
+  cpi: number | null;
+  spi: number | null;
+  eac: number | null;
+  vac: number | null;
+  tcpi: number | null;
+};
+
+export type Milestone = {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  plannedDate: string;
+  actualDate: string | null;
+  status: MilestoneStatus;
+  weight: string;
+  deliverable: string | null;
+  note: string | null;
+  acceptedBy: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Risk = {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  probability: number;
+  impact: number;
+  riskScore: number;
+  category: string | null;
+  owner: string | null;
+  mitigationPlan: string | null;
+  contingencyPlan: string | null;
+  status: RiskStatus;
+  identifiedAt: string;
+  resolvedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Issue = {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  severity: IssueSeverity;
+  status: IssueStatus;
+  owner: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ChangeRequest = {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  type: ChangeRequestType;
+  status: ChangeRequestStatus;
+  impactScope: string | null;
+  impactBudget: string | null;
+  impactDays: number | null;
+  requestedBy: string;
+  reviewedBy: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProjectDetailProject = {
+  id: string;
+  name: string;
+  company: string;
+  country: string;
+  currency: string;
+  status: ProjectStatus;
+  projectType: ProjectType;
+  phase: ProjectPhase | null;
+  healthStatus: HealthStatus | null;
+  completionPct: number | null;
+  projectManagerEmail: string | null;
+  startDate: string;
+  endDate: string;
+  baselineBudget: number | null;
+  baselineStartDate: string | null;
+  baselineEndDate: string | null;
+  baselineSetAt: string | null;
+  baselineSetBy: string | null;
+};
+
+export type ProjectDetailFinancials = {
+  displayCurrency: string;
+  budget: number;
+  spent: number;
+  laborCostActual: number;
+  expensesActual: number;
+  remainingBudget: number;
+  usedBudgetPercent: number;
+  alertLevel: "ok" | "warning" | "exceeded";
+  contractValue: number;
+  revenueRecognized: number;
+  grossMarginActual: number;
+  grossMarginActualPct: number | null;
+  approvedHours: number;
+};
+
+export type ProjectDetailSummary = {
+  totalMilestones: number;
+  completedMilestones: number;
+  delayedMilestones: number;
+  openRisks: number;
+  openHighRisks: number;
+  openIssues: number;
+  pendingChanges: number;
+};
+
+export type ProjectDetail = {
+  project: ProjectDetailProject;
+  financials: ProjectDetailFinancials;
+  evm: EVMResult | null;
+  milestones: Milestone[];
+  risks: Risk[];
+  issues: Issue[];
+  changeRequests: ChangeRequest[];
+  assignments: Assignment[];
+  summary: ProjectDetailSummary;
+};
+
+export type PortfolioProject = {
+  projectId: string;
+  projectName: string;
+  company: string;
+  projectType: ProjectType;
+  status: ProjectStatus;
+  phase: ProjectPhase | null;
+  projectManagerEmail: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  completionPct: number;
+  healthStatus: HealthStatus;
+  displayCurrency: string;
+  budget: number;
+  spent: number;
+  usedBudgetPercent: number;
+  revenueRecognized: number;
+  grossMarginActual: number;
+  grossMarginActualPct: number | null;
+  alertLevel: "ok" | "warning" | "exceeded";
+  evm: EVMResult | null;
+  totalMilestones: number;
+  completedMilestones: number;
+  delayedMilestones: number;
+  totalRisks: number;
+  openHighRisks: number;
+  openIssues: number;
+  criticalIssues: number;
+};
+
+export type PortfolioSummary = {
+  totalProjects: number;
+  byHealth: { GREEN: number; YELLOW: number; RED: number };
+  byStatus: { ACTIVE: number; PAUSED: number; CLOSED: number };
+  totalBudget: number;
+  totalSpent: number;
+  totalRevenue: number;
+  totalGrossMargin: number;
+  criticalCount: number;
+  alertCount: number;
+};
+
+export type Portfolio = {
+  baseCurrency: string;
+  projects: PortfolioProject[];
+  summary: PortfolioSummary;
+};
+
+// ── StatsProjectRow enriched with PMP data ──
+export type StatsProjectRowEnriched = StatsProjectRow & {
+  phase: ProjectPhase | null;
+  completionPct: number;
+  healthStatus: HealthStatus;
+  evm: EVMResult | null;
+  openHighRisks?: number;
+  openIssues?: number;
+  pendingChanges?: number;
+};
+
+// ─── Project Detail API ────────────────────────────────────────────────────────
+
+export async function getProjectDetail(projectId: string, baseCurrency?: string): Promise<ProjectDetail> {
+  const query = baseCurrency ? `?baseCurrency=${baseCurrency}` : "";
+  const response = await request<ApiEnvelope<ProjectDetail>>(`/api/projects/${projectId}/detail${query}`);
+  return response.data;
+}
+
+export async function setProjectBaseline(projectId: string, payload: { setBy?: string }): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/baseline`, "PATCH", payload);
+}
+
+export async function setProjectPhase(projectId: string, phase: ProjectPhase): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/phase`, "PATCH", { phase });
+}
+
+export async function setProjectHealth(projectId: string, healthStatus: HealthStatus): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/health`, "PATCH", { healthStatus });
+}
+
+export async function setProjectCompletion(projectId: string, completionPct: number): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/completion`, "PATCH", { completionPct });
+}
+
+// ─── Milestones ────────────────────────────────────────────────────────────────
+
+export async function listMilestones(projectId: string): Promise<Milestone[]> {
+  const response = await request<ApiEnvelope<Milestone[]>>(`/api/projects/${projectId}/milestones`);
+  return response.data;
+}
+
+export async function createMilestone(projectId: string, payload: {
+  name: string;
+  description?: string;
+  plannedDate: string;
+  weight?: number;
+  deliverable?: string;
+  note?: string;
+}): Promise<Milestone> {
+  const response = await request<ApiEnvelope<Milestone>>(`/api/projects/${projectId}/milestones`, "POST", payload);
+  return response.data;
+}
+
+export async function updateMilestone(projectId: string, id: string, payload: {
+  name: string;
+  description?: string;
+  plannedDate: string;
+  weight?: number;
+  deliverable?: string;
+  note?: string;
+}): Promise<Milestone> {
+  const response = await request<ApiEnvelope<Milestone>>(`/api/projects/${projectId}/milestones/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function completeMilestone(projectId: string, id: string, acceptedBy?: string): Promise<Milestone> {
+  const response = await request<ApiEnvelope<Milestone>>(`/api/projects/${projectId}/milestones/${id}/complete`, "PATCH", { acceptedBy });
+  return response.data;
+}
+
+export async function updateMilestoneStatus(projectId: string, id: string, status: MilestoneStatus): Promise<Milestone> {
+  const response = await request<ApiEnvelope<Milestone>>(`/api/projects/${projectId}/milestones/${id}/status`, "PATCH", { status });
+  return response.data;
+}
+
+export async function deleteMilestone(projectId: string, id: string): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/milestones/${id}`, "DELETE");
+}
+
+// ─── Risks ─────────────────────────────────────────────────────────────────────
+
+export async function listRisks(projectId: string): Promise<Risk[]> {
+  const response = await request<ApiEnvelope<Risk[]>>(`/api/projects/${projectId}/risks`);
+  return response.data;
+}
+
+export async function createRisk(projectId: string, payload: {
+  title: string;
+  description?: string;
+  probability: number;
+  impact: number;
+  category?: string;
+  owner?: string;
+  mitigationPlan?: string;
+  contingencyPlan?: string;
+}): Promise<Risk> {
+  const response = await request<ApiEnvelope<Risk>>(`/api/projects/${projectId}/risks`, "POST", payload);
+  return response.data;
+}
+
+export async function updateRisk(projectId: string, id: string, payload: {
+  title: string;
+  description?: string;
+  probability: number;
+  impact: number;
+  category?: string;
+  owner?: string;
+  mitigationPlan?: string;
+  contingencyPlan?: string;
+}): Promise<Risk> {
+  const response = await request<ApiEnvelope<Risk>>(`/api/projects/${projectId}/risks/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function updateRiskStatus(projectId: string, id: string, status: RiskStatus): Promise<Risk> {
+  const response = await request<ApiEnvelope<Risk>>(`/api/projects/${projectId}/risks/${id}/status`, "PATCH", { status });
+  return response.data;
+}
+
+export async function deleteRisk(projectId: string, id: string): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/risks/${id}`, "DELETE");
+}
+
+// ─── Issues ────────────────────────────────────────────────────────────────────
+
+export async function listIssues(projectId: string): Promise<Issue[]> {
+  const response = await request<ApiEnvelope<Issue[]>>(`/api/projects/${projectId}/issues`);
+  return response.data;
+}
+
+export async function createIssue(projectId: string, payload: {
+  title: string;
+  description?: string;
+  severity?: IssueSeverity;
+  owner?: string;
+}): Promise<Issue> {
+  const response = await request<ApiEnvelope<Issue>>(`/api/projects/${projectId}/issues`, "POST", payload);
+  return response.data;
+}
+
+export async function updateIssue(projectId: string, id: string, payload: {
+  title: string;
+  description?: string;
+  severity?: IssueSeverity;
+  owner?: string;
+}): Promise<Issue> {
+  const response = await request<ApiEnvelope<Issue>>(`/api/projects/${projectId}/issues/${id}`, "PUT", payload);
+  return response.data;
+}
+
+export async function resolveIssue(projectId: string, id: string, payload: {
+  resolution?: string;
+  status?: IssueStatus;
+}): Promise<Issue> {
+  const response = await request<ApiEnvelope<Issue>>(`/api/projects/${projectId}/issues/${id}/resolve`, "PATCH", payload);
+  return response.data;
+}
+
+export async function deleteIssue(projectId: string, id: string): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/issues/${id}`, "DELETE");
+}
+
+// ─── Change Requests ───────────────────────────────────────────────────────────
+
+export async function listChangeRequests(projectId: string): Promise<ChangeRequest[]> {
+  const response = await request<ApiEnvelope<ChangeRequest[]>>(`/api/projects/${projectId}/changes`);
+  return response.data;
+}
+
+export async function createChangeRequest(projectId: string, payload: {
+  title: string;
+  description: string;
+  type: ChangeRequestType;
+  impactScope?: string;
+  impactBudget?: number;
+  impactDays?: number;
+}): Promise<ChangeRequest> {
+  const response = await request<ApiEnvelope<ChangeRequest>>(`/api/projects/${projectId}/changes`, "POST", payload);
+  return response.data;
+}
+
+export async function approveChangeRequest(projectId: string, id: string, resolution?: string): Promise<ChangeRequest> {
+  const response = await request<ApiEnvelope<ChangeRequest>>(`/api/projects/${projectId}/changes/${id}/approve`, "PATCH", { resolution });
+  return response.data;
+}
+
+export async function rejectChangeRequest(projectId: string, id: string, resolution?: string): Promise<ChangeRequest> {
+  const response = await request<ApiEnvelope<ChangeRequest>>(`/api/projects/${projectId}/changes/${id}/reject`, "PATCH", { resolution });
+  return response.data;
+}
+
+export async function deleteChangeRequest(projectId: string, id: string): Promise<void> {
+  await request<void>(`/api/projects/${projectId}/changes/${id}`, "DELETE");
+}
+
+// ─── Project Timeline ──────────────────────────────────────────────────────────
+
+export type ProjectTimeline = {
+  projectId: string;
+  projectName: string;
+  baseCurrency: string;
+  bac: number;
+  startDate: string;
+  endDate: string;
+  completionPct: number | null;
+  actualCost: { month: string; ac: number }[];
+  plannedValue: { month: string; pv: number }[];
+};
+
+export async function getProjectTimeline(projectId: string): Promise<ProjectTimeline> {
+  const response = await request<ApiEnvelope<ProjectTimeline>>(`/api/projects/${projectId}/timeline`);
+  return response.data;
+}
+
+// ─── Portfolio ─────────────────────────────────────────────────────────────────
+
+export async function getPortfolio(baseCurrency?: string): Promise<Portfolio> {
+  const query = baseCurrency ? `?baseCurrency=${baseCurrency}` : "";
+  const response = await request<ApiEnvelope<Portfolio>>(`/api/stats/portfolio${query}`);
   return response.data;
 }

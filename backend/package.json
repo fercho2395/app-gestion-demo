@@ -4,7 +4,10 @@
   "description": "Backend API for App Gestion demo (Fastify + Prisma + PostgreSQL)",
   "main": "index.js",
   "scripts": {
-    "test": "npm run smoke",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "smoke": "node scripts/smoke.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "npm run start:api",
@@ -35,7 +38,9 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "@vitest/coverage-v8": "^4.1.4",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   }
 }

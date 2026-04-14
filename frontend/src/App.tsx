@@ -1,208 +1,186 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { env } from "./config/env";
 import { apiTokenRequest, loginRequest } from "./auth/msal";
 import {
-  approveTimeEntry,
-  createAdminUser,
-  createConsultant,
-  createExpense,
-  createForecast,
-  createProject,
-  createTimeEntry,
-  deleteConsultant,
-  deleteExpense,
-  deleteForecast,
-  deleteProject,
-  getHealth,
-  getMe,
-  getStatsOverview,
-  listAdminUsers,
-  listConsultants,
-  listExpenses,
-  listForecasts,
-  listProjects,
-  listTimeEntries,
-  rejectTimeEntry,
-  setApiAccessToken,
-  updateConsultant,
-  updateExpense,
-  updateForecast,
-  updateProject,
-  type AdminUser,
-  type AppRole,
-  type AuthUser,
-  type Consultant,
-  type Expense,
-  type Forecast,
-  type HealthResponse,
-  type Project,
-  type StatsOverview,
-  type TimeEntry,
+  getHealth, getMe, setApiAccessToken,
+  type AuthUser, type HealthResponse, type FxConfig,
 } from "./services/api";
+import { useProjects } from "./hooks/useProjects";
+import { useConsultants } from "./hooks/useConsultants";
+import { useTimeEntries } from "./hooks/useTimeEntries";
+import { useExpenses } from "./hooks/useExpenses";
+import { useForecasts } from "./hooks/useForecasts";
+import { useRevenue } from "./hooks/useRevenue";
+import { useFxConfigs } from "./hooks/useFxConfigs";
+import { useAdminUsers } from "./hooks/useAdminUsers";
+import { useStats } from "./hooks/useStats";
+import { useAlerts } from "./hooks/useAlerts";
+import { useToastController } from "./hooks/useToast";
+import { DashboardTab } from "./features/dashboard/DashboardTab";
+import { ProjectsTab } from "./features/projects/ProjectsTab";
+import { ProjectDetailTab } from "./features/projects/ProjectDetailTab";
+import { ConsultantsTab } from "./features/consultants/ConsultantsTab";
+import { TimeEntriesTab } from "./features/timeEntries/TimeEntriesTab";
+import { ExpensesTab } from "./features/expenses/ExpensesTab";
+import { ForecastsTab } from "./features/forecasts/ForecastsTab";
+import { RevenueTab } from "./features/revenue/RevenueTab";
+import { FxTab } from "./features/fx/FxTab";
+import { AdminTab } from "./features/admin/AdminTab";
+import { AuditTab } from "./features/audit/AuditTab";
+import { CapacityTab } from "./features/capacity/CapacityTab";
+import { PortfolioTab } from "./features/portfolio/PortfolioTab";
+import { AlertsPanel } from "./components/AlertsPanel";
+import { ToastContainer } from "./components/Toast";
+import type { TabId } from "./types";
 import "./App.css";
 
-type TabId = "dashboard" | "projects" | "consultants" | "timeEntries" | "expenses" | "forecasts" | "admin";
+// ── Sidebar config ──────────────────────────────────────────────────────────
 
-type EditModalState =
-  | {
-      type: "project";
-      id: string;
-      form: {
-        name: string;
-        company: string;
-        country: string;
-        currency: string;
-        budget: string;
-        startDate: string;
-        endDate: string;
-        description: string;
-      };
-    }
-  | {
-      type: "consultant";
-      id: string;
-      form: {
-        fullName: string;
-        email: string;
-        role: string;
-        hourlyRate: string;
-        active: boolean;
-      };
-    }
-  | {
-      type: "expense";
-      id: string;
-      form: {
-        projectId: string;
-        expenseDate: string;
-        category: string;
-        amount: string;
-        currency: string;
-        description: string;
-      };
-    }
-  | {
-      type: "forecast";
-      id: string;
-      form: {
-        projectId: string;
-        consultantId: string;
-        period: string;
-        hoursProjected: string;
-        hourlyRate: string;
-        note: string;
-      };
-    }
-  | null;
-
-const allTabs: Array<{ id: TabId; label: string; permission?: string }> = [
-  { id: "dashboard", label: "Dashboard", permission: "stats:read" },
-  { id: "projects", label: "Proyectos", permission: "projects:read" },
-  { id: "consultants", label: "Consultores", permission: "consultants:read" },
-  { id: "timeEntries", label: "Horas", permission: "time:read" },
-  { id: "expenses", label: "Gastos", permission: "expenses:read" },
-  { id: "forecasts", label: "Proyecciones", permission: "forecasts:read" },
-  { id: "admin", label: "Usuarios", permission: "users:manage" },
+const SIDEBAR_GROUPS: {
+  label: string;
+  tabs: { id: TabId; label: string; icon: string; permission?: string }[];
+}[] = [
+  {
+    label: "Gobierno",
+    tabs: [
+      { id: "dashboard",  label: "Dashboard",   icon: "▦",  permission: "stats:read" },
+      { id: "portfolio",  label: "Portafolio",  icon: "◈",  permission: "stats:read" },
+      { id: "projects",   label: "Proyectos",   icon: "◻",  permission: "projects:read" },
+      { id: "capacity",   label: "Capacidad",   icon: "◉",  permission: "capacity:read" },
+    ],
+  },
+  {
+    label: "Operación",
+    tabs: [
+      { id: "consultants",  label: "Consultores",   icon: "◐", permission: "consultants:read" },
+      { id: "timeEntries",  label: "Horas",          icon: "⊙", permission: "time:read" },
+      { id: "expenses",     label: "Gastos",         icon: "⊟", permission: "expenses:read" },
+    ],
+  },
+  {
+    label: "Financiero",
+    tabs: [
+      { id: "revenue",    label: "Ingresos",      icon: "⊕", permission: "revenue:read" },
+      { id: "forecasts",  label: "Proyecciones",  icon: "◷", permission: "forecasts:read" },
+      { id: "fx",         label: "Tasas FX",      icon: "⊗", permission: "fx:read" },
+    ],
+  },
+  {
+    label: "Administración",
+    tabs: [
+      { id: "admin", label: "Usuarios",  icon: "◐", permission: "users:manage" },
+      { id: "audit", label: "Auditoría", icon: "⊛", permission: "users:manage" },
+    ],
+  },
 ];
 
-const roleOptions: AppRole[] = ["ADMIN", "PM", "CONSULTANT", "FINANCE", "VIEWER"];
-const currencyOptions = ["COP", "USD", "EUR", "MXN", "PEN", "CLP"];
-const consultantRoleOptions = ["Analista", "Desarrollador", "QA", "Arquitecto", "PM", "Data Engineer"];
-const expenseCategoryOptions = ["Viajes", "Alojamiento", "Alimentacion", "Transporte", "Software", "Servicios", "Otros"];
-const quarterOptions = ["Q1", "Q2", "Q3", "Q4"];
-
-function money(value: number, currency = "USD") {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function numberish(value: string | null | undefined) {
-  if (!value) return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatPlainMoney(value: number) {
-  return Number(value).toLocaleString("es-CO", { maximumFractionDigits: 2 });
-}
-
-function toDateInput(value: string) {
-  return value.slice(0, 10);
-}
-
-function quarterToIndex(quarter: string) {
-  return quarterOptions.indexOf(quarter);
-}
-
-function buildForecastPeriods(yearText: string, startQuarter: string, endQuarter: string) {
-  const year = Number(yearText);
-  const startIdx = quarterToIndex(startQuarter);
-  const endIdx = quarterToIndex(endQuarter);
-
-  if (!Number.isInteger(year) || startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
-    throw new Error("Selecciona un rango de periodo valido");
-  }
-
-  return quarterOptions.slice(startIdx, endIdx + 1).map((quarter) => `${year}-${quarter}`);
-}
-
-function isWithinDateRange(dateText: string, from?: string, to?: string) {
-  if (!dateText) return false;
-  if (from && dateText < from) return false;
-  if (to && dateText > to) return false;
-  return true;
-}
-
-function periodToDateRange(period: string) {
-  const match = period.match(/^(\d{4})-Q([1-4])$/);
-  if (!match) {
-    return null;
-  }
-
-  const year = Number(match[1]);
-  const quarter = Number(match[2]);
-  const startMonth = (quarter - 1) * 3;
-
-  const startDate = new Date(Date.UTC(year, startMonth, 1));
-  const endDate = new Date(Date.UTC(year, startMonth + 3, 0));
-
-  const start = startDate.toISOString().slice(0, 10);
-  const end = endDate.toISOString().slice(0, 10);
-  return { start, end };
-}
-
-function overlapsRange(start: string, end: string, from?: string, to?: string) {
-  const min = from || "0000-01-01";
-  const max = to || "9999-12-31";
-  return !(end < min || start > max);
-}
+// ── Auth helpers ────────────────────────────────────────────────────────────
 
 async function getAccessToken(
   instance: ReturnType<typeof useMsal>["instance"],
   account: ReturnType<typeof useMsal>["accounts"][number],
 ): Promise<string | null> {
   const preferAccessToken = Boolean(env.azureApiScope);
-
   try {
-    const result = await instance.acquireTokenSilent({
-      ...apiTokenRequest,
-      account,
-    });
+    const result = await instance.acquireTokenSilent({ ...apiTokenRequest, account });
     return preferAccessToken ? result.accessToken || result.idToken : result.idToken || result.accessToken;
   } catch {
     await instance.acquireTokenRedirect({
-      ...apiTokenRequest,
-      account,
+      ...apiTokenRequest, account,
       redirectStartPage: `${window.location.origin}/home`,
     });
     return null;
   }
 }
+
+// ── FX Converter (drawer content) ──────────────────────────────────────────
+
+const CURRENCY_OPTIONS = ["COP", "USD", "EUR", "MXN", "PEN", "CLP"];
+
+function numberish(v: string | null | undefined) {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function FxDrawer({ open, onClose, fxConfigs }: { open: boolean; onClose: () => void; fxConfigs: FxConfig[] }) {
+  const [conv, setConv] = useState(() => {
+    const first = fxConfigs[0];
+    return { from: first?.baseCode ?? "USD", to: first?.quoteCode ?? "COP", amount: "1", rate: first?.rate ?? "4000" };
+  });
+
+  const result = useMemo(() => {
+    const a = numberish(conv.amount);
+    const r = numberish(conv.rate);
+    if (r <= 0) return null;
+    return a * r;
+  }, [conv.amount, conv.rate]);
+
+  return (
+    <>
+      {open && (
+        <div aria-hidden="true" onClick={onClose}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.25)", zIndex: 300 }} />
+      )}
+      <div className={`fx-drawer${open ? " open" : ""}`} role="dialog" aria-label="Conversor FX" aria-modal="true">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0, fontSize: "1rem", color: "#5f2f00" }}>⊗ Conversor de divisas</h2>
+          <button type="button" className="ghost" onClick={onClose} aria-label="Cerrar conversor" style={{ padding: "0.25rem 0.5rem" }}>✕</button>
+        </div>
+
+        <div className="form-grid converter-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <select value={conv.from} onChange={(e) => setConv((p) => ({ ...p, from: e.target.value }))}>
+            {CURRENCY_OPTIONS.map((c) => <option key={c} value={c}>Desde {c}</option>)}
+          </select>
+          <select value={conv.to} onChange={(e) => setConv((p) => ({ ...p, to: e.target.value }))}>
+            {CURRENCY_OPTIONS.map((c) => <option key={c} value={c}>Hacia {c}</option>)}
+          </select>
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "#6b7280", display: "block", marginBottom: "0.2rem" }}>Cantidad</label>
+            <input type="number" min="0" step="0.01" value={conv.amount}
+              onChange={(e) => setConv((p) => ({ ...p, amount: e.target.value }))} placeholder="Cantidad" />
+          </div>
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "#6b7280", display: "block", marginBottom: "0.2rem" }}>
+              Tasa {conv.from}→{conv.to}
+            </label>
+            <input type="number" min="0" step="0.0001" value={conv.rate}
+              onChange={(e) => setConv((p) => ({ ...p, rate: e.target.value }))} />
+          </div>
+        </div>
+
+        <div style={{ background: "#fff8f0", border: "1px solid #f4d4b6", borderRadius: "10px", padding: "0.75rem" }}>
+          {result === null
+            ? <p style={{ color: "#9ca3af", fontSize: "0.85rem", margin: 0 }}>Define una tasa mayor a 0</p>
+            : <p style={{ color: "#5f2f00", fontWeight: 800, fontSize: "1.1rem", margin: 0 }}>
+                {conv.from} {Number(conv.amount).toLocaleString("es-CO")}
+                <span style={{ color: "#9a4f0f", fontSize: "0.85rem", fontWeight: 600, margin: "0 0.4rem" }}>→</span>
+                {conv.to} {result.toLocaleString("es-CO", { maximumFractionDigits: 2 })}
+              </p>
+          }
+        </div>
+
+        {fxConfigs.length > 0 && (
+          <div>
+            <p style={{ fontSize: "0.7rem", color: "#9a4f0f", fontWeight: 700, marginBottom: "0.4rem" }}>
+              Tasas configuradas
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+              {fxConfigs.map((fx) => (
+                <div key={fx.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "#5f2f00" }}>
+                  <span>{fx.baseCode} → {fx.quoteCode}</span>
+                  <strong>{Number(fx.rate).toLocaleString("es-CO", { maximumFractionDigits: 4 })}</strong>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── App ─────────────────────────────────────────────────────────────────────
 
 function App() {
   const microsoftConfigured = Boolean(env.azureClientId && env.azureTenantId);
@@ -210,99 +188,45 @@ function App() {
   const { instance, accounts } = useMsal();
   const isAuthenticated = useIsAuthenticated();
   const [currentPath, setCurrentPath] = useState(() => (window.location.pathname || "/").toLowerCase());
-
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openProjectId, setOpenProjectId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [fxDrawerOpen, setFxDrawerOpen] = useState(false);
 
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [consultants, setConsultants] = useState<Consultant[]>([]);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [forecasts, setForecasts] = useState<Forecast[]>([]);
-  const [stats, setStats] = useState<StatsOverview | null>(null);
-  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [projectSearch, setProjectSearch] = useState("");
-  const [statsFilters, setStatsFilters] = useState({
-    company: "",
-    projectId: "",
-    from: "",
-    to: "",
-  });
-  const [currencyConverter, setCurrencyConverter] = useState({
-    baseCurrency: "USD",
-    targetCurrency: "COP",
-    amount: "1",
-    rate: "4000",
-  });
-
-  const [projectForm, setProjectForm] = useState({
-    name: "",
-    company: "",
-    country: "",
-    currency: "USD",
-    budget: "",
-    startDate: "",
-    endDate: "",
-    description: "",
-  });
-
-  const [consultantForm, setConsultantForm] = useState({
-    fullName: "",
-    email: "",
-    role: consultantRoleOptions[0],
-    hourlyRate: "",
-    active: true,
-    rateCurrency: "COP",
-  });
-
-  const [timeForm, setTimeForm] = useState({
-    projectId: "",
-    consultantId: "",
-    workDate: "",
-    hours: "",
-    note: "",
-  });
-
-  const [expenseForm, setExpenseForm] = useState({
-    projectId: "",
-    expenseDate: "",
-    category: expenseCategoryOptions[0],
-    amount: "",
-    currency: "COP",
-    description: "",
-  });
-
-  const [forecastForm, setForecastForm] = useState({
-    projectId: "",
-    consultantId: "",
-    periodYear: String(new Date().getFullYear()),
-    periodQuarterStart: "Q1",
-    periodQuarterEnd: "Q1",
-    hoursProjected: "",
-    hourlyRate: "",
-    note: "",
-  });
-
-  const [adminUserForm, setAdminUserForm] = useState({
-    email: "",
-    displayName: "",
-    microsoftOid: "",
-    active: true,
-    role: "VIEWER" as AppRole,
-  });
-  const [editModal, setEditModal] = useState<EditModalState>(null);
+  const { toasts, show: showToast, dismiss } = useToastController();
 
   const permissions = authUser?.permissions ?? [];
+  const can = (p: string) => permissions.includes(p);
+
+  // Domain hooks
+  const projectsHook    = useProjects(!!authUser && can("projects:read"));
+  const consultantsHook = useConsultants(!!authUser && can("consultants:read"));
+  const timeEntriesHook = useTimeEntries(!!authUser && can("time:read"));
+  const expensesHook    = useExpenses(!!authUser && can("expenses:read"));
+  const forecastsHook   = useForecasts(!!authUser && can("forecasts:read"));
+  const revenueHook     = useRevenue(!!authUser && can("revenue:read"));
+  const fxHook          = useFxConfigs(!!authUser && can("fx:read"));
+  const adminHook       = useAdminUsers(!!authUser && can("users:manage"));
+  const statsHook       = useStats(!!authUser && can("stats:read"));
+  const alertsHook      = useAlerts(!!authUser && (can("stats:read") || can("projects:read")));
+
+  // Visible tabs per permission
+  const visibleGroups = useMemo(() =>
+    SIDEBAR_GROUPS.map((g) => ({
+      ...g,
+      tabs: g.tabs.filter((t) => !t.permission || permissions.includes(t.permission)),
+    })).filter((g) => g.tabs.length > 0),
+  [permissions]);
+
+  const allVisibleTabs = useMemo(() => visibleGroups.flatMap((g) => g.tabs), [visibleGroups]);
 
   function goTo(path: "/login" | "/home", replace = false) {
-    if (replace) {
-      window.history.replaceState({}, "", path);
-    } else {
-      window.history.pushState({}, "", path);
-    }
+    if (replace) window.history.replaceState({}, "", path);
+    else window.history.pushState({}, "", path);
     setCurrentPath(path);
   }
 
@@ -318,612 +242,105 @@ function App() {
     }
   }, [currentPath, authUser]);
 
-  const tabs = useMemo(
-    () => allTabs.filter((tab) => !tab.permission || permissions.includes(tab.permission)),
-    [permissions],
-  );
-
-  const filteredProjects = useMemo(() => {
-    const term = projectSearch.trim().toLowerCase();
-    if (!term) {
-      return projects;
-    }
-
-    return projects.filter((project) => {
-      return project.name.toLowerCase().includes(term) || project.company.toLowerCase().includes(term);
-    });
-  }, [projects, projectSearch]);
-
-  const convertedAmount = useMemo(() => {
-    const amount = numberish(currencyConverter.amount);
-    const rate = numberish(currencyConverter.rate);
-    if (rate <= 0) return null;
-    return amount * rate;
-  }, [currencyConverter.amount, currencyConverter.rate]);
-
-  const companies = useMemo(() => {
-    const unique = new Set(projects.map((project) => project.company).filter(Boolean));
-    return Array.from(unique).sort((a, b) => a.localeCompare(b));
-  }, [projects]);
-
-  const dashboardProjects = useMemo(() => {
-    return projects.filter((project) => {
-      if (statsFilters.company && project.company !== statsFilters.company) return false;
-      if (statsFilters.projectId && project.id !== statsFilters.projectId) return false;
-      return true;
-    });
-  }, [projects, statsFilters.company, statsFilters.projectId]);
-
-  const dashboardProjectIds = useMemo(() => {
-    return new Set(dashboardProjects.map((project) => project.id));
-  }, [dashboardProjects]);
-
-  const dashboardTimeEntries = useMemo(() => {
-    return timeEntries.filter((entry) => {
-      if (!dashboardProjectIds.has(entry.projectId)) return false;
-      return isWithinDateRange(entry.workDate.slice(0, 10), statsFilters.from, statsFilters.to);
-    });
-  }, [timeEntries, dashboardProjectIds, statsFilters.from, statsFilters.to]);
-
-  const dashboardApprovedTimeEntries = useMemo(() => {
-    return dashboardTimeEntries.filter((entry) => entry.status === "APPROVED");
-  }, [dashboardTimeEntries]);
-
-  const dashboardExpenses = useMemo(() => {
-    return expenses.filter((expense) => {
-      if (!dashboardProjectIds.has(expense.projectId)) return false;
-      return isWithinDateRange(expense.expenseDate.slice(0, 10), statsFilters.from, statsFilters.to);
-    });
-  }, [expenses, dashboardProjectIds, statsFilters.from, statsFilters.to]);
-
-  const dashboardForecasts = useMemo(() => {
-    return forecasts.filter((forecast) => {
-      if (!dashboardProjectIds.has(forecast.projectId)) return false;
-      const range = periodToDateRange(forecast.period);
-      if (!range) return true;
-      return overlapsRange(range.start, range.end, statsFilters.from, statsFilters.to);
-    });
-  }, [forecasts, dashboardProjectIds, statsFilters.from, statsFilters.to]);
-
-  const dashboardTotals = useMemo(() => {
-    const budget = dashboardProjects.reduce((acc, project) => acc + numberish(project.budget), 0);
-    const spent = dashboardExpenses.reduce((acc, expense) => acc + numberish(expense.amount), 0);
-    const totalHours = dashboardTimeEntries.reduce((acc, entry) => acc + numberish(entry.hours), 0);
-    const approvedHours = dashboardApprovedTimeEntries.reduce((acc, entry) => acc + numberish(entry.hours), 0);
-    const projectedCost = dashboardForecasts.reduce((acc, forecast) => acc + numberish(String(forecast.projectedCost || 0)), 0);
-    return { budget, spent, totalHours, approvedHours, projectedCost };
-  }, [dashboardProjects, dashboardExpenses, dashboardTimeEntries, dashboardApprovedTimeEntries, dashboardForecasts]);
-
-  const dashboardProjectSummary = useMemo(() => {
-    return dashboardProjects
-      .map((project) => {
-        const projectSpent = dashboardExpenses
-          .filter((expense) => expense.projectId === project.id)
-          .reduce((acc, expense) => acc + numberish(expense.amount), 0);
-
-        const projectApprovedHours = dashboardApprovedTimeEntries
-          .filter((entry) => entry.projectId === project.id)
-          .reduce((acc, entry) => acc + numberish(entry.hours), 0);
-
-        const projectProjectedCost = dashboardForecasts
-          .filter((forecast) => forecast.projectId === project.id)
-          .reduce((acc, forecast) => acc + numberish(String(forecast.projectedCost || 0)), 0);
-
-        const budget = numberish(project.budget);
-        const remaining = budget - projectSpent;
-        const projectedTotal = projectSpent + projectProjectedCost;
-        const projectedPct = budget > 0 ? (projectedTotal / budget) * 100 : 0;
-
-        return {
-          project,
-          spent: projectSpent,
-          approvedHours: projectApprovedHours,
-          remaining,
-          projectedCost: projectProjectedCost,
-          projectedTotal,
-          projectedPct,
-        };
-      })
-      .sort((a, b) => b.projectedPct - a.projectedPct);
-  }, [dashboardProjects, dashboardExpenses, dashboardApprovedTimeEntries, dashboardForecasts]);
-
-  const dashboardHoursByConsultant = useMemo(() => {
-    const grouped = new Map<string, { total: number; byProject: Map<string, number> }>();
-
-    for (const entry of dashboardApprovedTimeEntries) {
-      const key = entry.consultant.fullName || "Sin nombre";
-      if (!grouped.has(key)) {
-        grouped.set(key, { total: 0, byProject: new Map() });
-      }
-
-      const node = grouped.get(key)!;
-      const hours = numberish(entry.hours);
-      node.total += hours;
-      node.byProject.set(entry.projectId, (node.byProject.get(entry.projectId) || 0) + hours);
-    }
-
-    return Array.from(grouped.entries())
-      .map(([consultant, value]) => ({ consultant, total: value.total, byProject: value.byProject }))
-      .sort((a, b) => b.total - a.total);
-  }, [dashboardApprovedTimeEntries]);
-
-  const dashboardForecastByConsultant = useMemo(() => {
-    const grouped = new Map<string, { totalHours: number; items: Forecast[] }>();
-
-    for (const forecast of dashboardForecasts) {
-      const key = forecast.consultant.fullName || "Sin nombre";
-      if (!grouped.has(key)) {
-        grouped.set(key, { totalHours: 0, items: [] });
-      }
-
-      const node = grouped.get(key)!;
-      node.totalHours += numberish(forecast.hoursProjected);
-      node.items.push(forecast);
-    }
-
-    return Array.from(grouped.entries())
-      .map(([consultant, value]) => ({
-        consultant,
-        totalHours: value.totalHours,
-        items: value.items.sort((a, b) => a.period.localeCompare(b.period)),
-      }))
-      .sort((a, b) => b.totalHours - a.totalHours);
-  }, [dashboardForecasts]);
-
   useEffect(() => {
-    if (!tabs.some((tab) => tab.id === activeTab)) {
-      setActiveTab(tabs[0]?.id ?? "dashboard");
+    if (!allVisibleTabs.some((t) => t.id === activeTab)) {
+      setActiveTab(allVisibleTabs[0]?.id ?? "dashboard");
     }
-  }, [tabs, activeTab]);
-
-  function can(permission: string) {
-    return permissions.includes(permission);
-  }
-
-  async function loadDomainData(user: AuthUser | null) {
-    const userPermissions = user?.permissions ?? [];
-
-    const [projectsResult, consultantsResult, timeEntriesResult, expensesResult, forecastsResult, statsResult, adminUsersResult] =
-      await Promise.all([
-        userPermissions.includes("projects:read") ? listProjects() : Promise.resolve([]),
-        userPermissions.includes("consultants:read") ? listConsultants() : Promise.resolve([]),
-        userPermissions.includes("time:read") ? listTimeEntries() : Promise.resolve([]),
-        userPermissions.includes("expenses:read") ? listExpenses() : Promise.resolve([]),
-        userPermissions.includes("forecasts:read") ? listForecasts() : Promise.resolve([]),
-        userPermissions.includes("stats:read") ? getStatsOverview() : Promise.resolve(null),
-        userPermissions.includes("users:manage") ? listAdminUsers() : Promise.resolve([]),
-      ]);
-
-    setProjects(projectsResult);
-    setConsultants(consultantsResult);
-    setTimeEntries(timeEntriesResult);
-    setExpenses(expensesResult);
-    setForecasts(forecastsResult);
-    setStats(statsResult);
-    setAdminUsers(adminUsersResult);
-  }
+  }, [allVisibleTabs, activeTab]);
 
   async function bootstrap() {
     try {
       setLoading(true);
       setError(null);
-
       const healthResult = await getHealth();
       setHealth(healthResult);
-
       if (authWithMicrosoftEnabled) {
         if (!isAuthenticated || !accounts[0]) {
           setAuthUser(null);
-          if (currentPath !== "/login") {
-            goTo("/login", true);
-          }
+          if (currentPath !== "/login") goTo("/login", true);
           setLoading(false);
           return;
         }
-
         const token = await getAccessToken(instance, accounts[0]);
-        if (!token) {
-          return;
-        }
+        if (!token) return;
         setApiAccessToken(token);
       } else {
         setApiAccessToken(null);
       }
-
       const me = await getMe();
       setAuthUser(me);
-      if (currentPath !== "/home") {
-        goTo("/home", true);
-      }
-      await loadDomainData(me);
-    } catch (bootstrapError) {
+      if (currentPath !== "/home") goTo("/home", true);
+    } catch (err) {
       setAuthUser(null);
-      setError(bootstrapError instanceof Error ? bootstrapError.message : "Error inicializando la aplicación");
+      setError(err instanceof Error ? err.message : "Error inicializando la aplicación");
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    void bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [microsoftConfigured, isAuthenticated, accounts.length, currentPath]);
-
-  async function submitProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      await createProject({ ...projectForm, budget: Number(projectForm.budget) });
-      setProjectForm({ name: "", company: "", country: "", currency: "USD", budget: "", startDate: "", endDate: "", description: "" });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo crear proyecto");
-    }
-  }
-
-  async function editProject(project: Project) {
-    setEditModal({
-      type: "project",
-      id: project.id,
-      form: {
-        name: project.name,
-        company: project.company,
-        country: project.country,
-        currency: project.currency,
-        budget: String(numberish(project.budget)),
-        startDate: toDateInput(project.startDate),
-        endDate: toDateInput(project.endDate),
-        description: project.description || "",
-      },
-    });
-  }
-
-  async function removeProject(project: Project) {
-    try {
-      if (!window.confirm(`Eliminar proyecto ${project.name}?`)) return;
-      await deleteProject(project.id);
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo eliminar proyecto");
-    }
-  }
-
-  async function submitConsultant(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      await createConsultant({
-        fullName: consultantForm.fullName,
-        email: consultantForm.email,
-        role: consultantForm.role,
-        hourlyRate: consultantForm.hourlyRate ? Number(consultantForm.hourlyRate) : undefined,
-        active: consultantForm.active,
-      });
-      setConsultantForm({ fullName: "", email: "", role: consultantRoleOptions[0], hourlyRate: "", active: true, rateCurrency: "COP" });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo crear consultor");
-    }
-  }
-
-  async function editConsultant(consultant: Consultant) {
-    setEditModal({
-      type: "consultant",
-      id: consultant.id,
-      form: {
-        fullName: consultant.fullName,
-        email: consultant.email || "",
-        role: consultant.role,
-        hourlyRate: String(numberish(consultant.hourlyRate)),
-        active: consultant.active,
-      },
-    });
-  }
-
-  async function toggleConsultantActive(consultant: Consultant) {
-    try {
-      await updateConsultant(consultant.id, {
-        fullName: consultant.fullName,
-        email: consultant.email || "",
-        role: consultant.role,
-        hourlyRate: numberish(consultant.hourlyRate),
-        active: !consultant.active,
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo actualizar estado del consultor");
-    }
-  }
-
-  async function removeConsultant(consultant: Consultant) {
-    try {
-      if (!window.confirm(`Eliminar consultor ${consultant.fullName}?`)) return;
-      await deleteConsultant(consultant.id);
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo eliminar consultor");
-    }
-  }
-
-  async function submitTimeEntry(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      await createTimeEntry({
-        projectId: timeForm.projectId,
-        consultantId: timeForm.consultantId,
-        workDate: timeForm.workDate,
-        hours: Number(timeForm.hours),
-        note: timeForm.note,
-      });
-      setTimeForm({ projectId: "", consultantId: "", workDate: "", hours: "", note: "" });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo registrar hora");
-    }
-  }
-
-  async function submitExpense(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      await createExpense({
-        projectId: expenseForm.projectId,
-        expenseDate: expenseForm.expenseDate,
-        category: expenseForm.category,
-        amount: Number(expenseForm.amount),
-        currency: expenseForm.currency,
-        description: expenseForm.description,
-      });
-      setExpenseForm({ projectId: "", expenseDate: "", category: expenseCategoryOptions[0], amount: "", currency: "COP", description: "" });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo registrar gasto");
-    }
-  }
-
-  async function editExpense(expense: Expense) {
-    setEditModal({
-      type: "expense",
-      id: expense.id,
-      form: {
-        projectId: expense.projectId,
-        expenseDate: toDateInput(expense.expenseDate),
-        category: expense.category,
-        amount: String(numberish(expense.amount)),
-        currency: expense.currency,
-        description: expense.description || "",
-      },
-    });
-  }
-
-  async function removeExpense(expense: Expense) {
-    try {
-      if (!window.confirm(`Eliminar gasto de ${expense.category}?`)) return;
-      await deleteExpense(expense.id);
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo eliminar gasto");
-    }
-  }
-
-  async function submitForecast(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    try {
-      const periods = buildForecastPeriods(
-        forecastForm.periodYear,
-        forecastForm.periodQuarterStart,
-        forecastForm.periodQuarterEnd,
-      );
-
-      await Promise.all(
-        periods.map((period) =>
-          createForecast({
-            projectId: forecastForm.projectId,
-            consultantId: forecastForm.consultantId,
-            period,
-            hoursProjected: Number(forecastForm.hoursProjected),
-            hourlyRate: forecastForm.hourlyRate ? Number(forecastForm.hourlyRate) : undefined,
-            note: forecastForm.note,
-          }),
-        ),
-      );
-      setForecastForm({
-        projectId: "",
-        consultantId: "",
-        periodYear: String(new Date().getFullYear()),
-        periodQuarterStart: "Q1",
-        periodQuarterEnd: "Q1",
-        hoursProjected: "",
-        hourlyRate: "",
-        note: "",
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo crear proyección");
-    }
-  }
-
-  async function editForecast(forecast: Forecast) {
-    setEditModal({
-      type: "forecast",
-      id: forecast.id,
-      form: {
-        projectId: forecast.projectId,
-        consultantId: forecast.consultantId,
-        period: forecast.period,
-        hoursProjected: String(numberish(forecast.hoursProjected)),
-        hourlyRate: String(numberish(forecast.hourlyRate)),
-        note: forecast.note || "",
-      },
-    });
-  }
-
-  async function submitEditModal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editModal) return;
-
-    try {
-      if (editModal.type === "project") {
-        await updateProject(editModal.id, {
-          name: editModal.form.name,
-          company: editModal.form.company,
-          country: editModal.form.country,
-          currency: editModal.form.currency,
-          budget: Number(editModal.form.budget),
-          startDate: editModal.form.startDate,
-          endDate: editModal.form.endDate,
-          description: editModal.form.description,
-        });
-      }
-
-      if (editModal.type === "consultant") {
-        await updateConsultant(editModal.id, {
-          fullName: editModal.form.fullName,
-          email: editModal.form.email,
-          role: editModal.form.role,
-          hourlyRate: editModal.form.hourlyRate ? Number(editModal.form.hourlyRate) : undefined,
-          active: editModal.form.active,
-        });
-      }
-
-      if (editModal.type === "expense") {
-        await updateExpense(editModal.id, {
-          projectId: editModal.form.projectId,
-          expenseDate: editModal.form.expenseDate,
-          category: editModal.form.category,
-          amount: Number(editModal.form.amount),
-          currency: editModal.form.currency,
-          description: editModal.form.description,
-        });
-      }
-
-      if (editModal.type === "forecast") {
-        await updateForecast(editModal.id, {
-          projectId: editModal.form.projectId,
-          consultantId: editModal.form.consultantId,
-          period: editModal.form.period,
-          hoursProjected: Number(editModal.form.hoursProjected),
-          hourlyRate: editModal.form.hourlyRate ? Number(editModal.form.hourlyRate) : undefined,
-          note: editModal.form.note,
-        });
-      }
-
-      setEditModal(null);
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo guardar edición");
-    }
-  }
-
-  async function removeForecast(forecast: Forecast) {
-    try {
-      if (!window.confirm(`Eliminar proyección ${forecast.period}?`)) return;
-      await deleteForecast(forecast.id);
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo eliminar proyección");
-    }
-  }
-
-  async function submitAdminUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    try {
-      await createAdminUser({
-        email: adminUserForm.email,
-        displayName: adminUserForm.displayName,
-        microsoftOid: adminUserForm.microsoftOid || undefined,
-        active: adminUserForm.active,
-        roles: [adminUserForm.role],
-      });
-      setAdminUserForm({
-        email: "",
-        displayName: "",
-        microsoftOid: "",
-        active: true,
-        role: "VIEWER",
-      });
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo crear usuario");
-    }
-  }
-
-  async function reviewTimeEntry(id: string, action: "approve" | "reject") {
-    try {
-      if (action === "approve") {
-        await approveTimeEntry(id, authUser?.displayName || "admin");
-      } else {
-        await rejectTimeEntry(id, authUser?.displayName || "admin", "No cumple criterio");
-      }
-      await bootstrap();
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "No se pudo actualizar estado");
-    }
-  }
-
-  async function loginWithMicrosoft() {
-    if (currentPath !== "/login") {
-      goTo("/login", true);
-    }
-    await instance.loginRedirect({
-      ...loginRequest,
-      redirectStartPage: `${window.location.origin}/home`,
-    });
-  }
+  useEffect(() => { void bootstrap(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [microsoftConfigured, isAuthenticated, accounts.length, currentPath]);
 
   async function logout() {
     setApiAccessToken(null);
     setAuthUser(null);
     goTo("/login", true);
     if (authWithMicrosoftEnabled) {
-      await instance.logoutRedirect({
-        postLogoutRedirectUri: `${window.location.origin}/login`,
-      });
+      await instance.logoutRedirect({ postLogoutRedirectUri: `${window.location.origin}/login` });
     }
   }
 
+  function handleError(msg: string) {
+    setError(msg);
+    showToast(msg, "error");
+  }
+
+  function openProject(id: string) {
+    setOpenProjectId(id);
+    setActiveTab("projects");
+  }
+
+  /** Drill-through: navigate to another tab from a KPI click */
+  function drillTo(tab: TabId) {
+    setActiveTab(tab);
+  }
+
+  // ── Not authenticated ────────────────────────────────────────────────────
   if (!authUser) {
     if (loading) {
       return (
-        <main className="shell auth-shell">
+        <main className="auth-shell">
           <section className="auth-card">
-            <div className="logo-slot">Logo Empresa</div>
+            <div className="logo-slot">Logo</div>
             <h1>App Gestion Demo</h1>
-            <p>Inicializando sesión...</p>
+            <p>Inicializando sesión…</p>
           </section>
         </main>
       );
     }
-
     return (
-      <main className="shell auth-shell">
+      <main className="auth-shell">
         <section className="auth-card">
-          <div className="logo-slot">Logo Empresa</div>
+          <div className="logo-slot">Logo</div>
           <h1>App Gestion Demo</h1>
           {error && <p className="error-banner">{error}</p>}
           {authWithMicrosoftEnabled ? (
-            <>
-              {isAuthenticated ? (
-                <>
-                  <p>
-                    Tu sesión Microsoft está activa, pero no fue posible validar permisos en la app.
-                  </p>
-                  <div className="inline-actions">
-                    <button type="button" onClick={() => void bootstrap()}>
-                      Reintentar
-                    </button>
-                    <button type="button" className="ghost" onClick={() => void logout()}>
-                      Cerrar sesión Microsoft
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p>Ingresa con Microsoft para continuar.</p>
-                  <button type="button" onClick={() => void loginWithMicrosoft()}>
-                    Iniciar sesión con Microsoft
-                  </button>
-                </>
-              )}
-            </>
+            isAuthenticated ? (
+              <>
+                <p>Tu sesión Microsoft está activa, pero no fue posible validar permisos.</p>
+                <div className="inline-actions">
+                  <button type="button" onClick={() => void bootstrap()}>Reintentar</button>
+                  <button type="button" className="ghost" onClick={() => void logout()}>Cerrar sesión</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>Ingresa con Microsoft para continuar.</p>
+                <button type="button"
+                  onClick={() => void instance.loginRedirect({ ...loginRequest, redirectStartPage: `${window.location.origin}/home` })}>
+                  Iniciar sesión con Microsoft
+                </button>
+              </>
+            )
           ) : (
             <p>Modo demo activo sin login Microsoft.</p>
           )}
@@ -932,482 +349,237 @@ function App() {
     );
   }
 
+  // ── Timestamp ────────────────────────────────────────────────────────────
+  const lastUpdatedLabel = statsHook.lastUpdated
+    ? `Actualizado ${statsHook.lastUpdated.toLocaleString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`
+    : null;
+
+  // ── Authenticated ────────────────────────────────────────────────────────
   return (
-    <main className="shell">
+    <div className="shell">
+      {/* Header */}
       <header className="hero">
         <div className="hero-left">
-          <div className="logo-slot">Logo Empresa</div>
+          <div className="logo-slot">Logo</div>
           <div>
             <h1>App Gestion Demo</h1>
             <p>Gestión integral de proyectos, horas, gastos y proyecciones</p>
+            {lastUpdatedLabel && (
+              <div className="hero-meta">
+                <span className={`pill ${health?.ok ? "ok" : "error"}`} style={{ fontSize: "0.65rem", padding: "0.15rem 0.5rem" }}>
+                  {health?.ok ? "● Backend activo" : "● Backend no disponible"}
+                </span>
+                <span>🕐 {lastUpdatedLabel}</span>
+              </div>
+            )}
+            {!lastUpdatedLabel && (
+              <div className="hero-meta">
+                <span className={`pill ${health?.ok ? "ok" : "error"}`} style={{ fontSize: "0.65rem", padding: "0.15rem 0.5rem" }}>
+                  {health?.ok ? "● Backend activo" : "● Backend no disponible"}
+                </span>
+              </div>
+            )}
           </div>
         </div>
+
         <div className="badges">
-          <span className={`pill ${health?.ok ? "ok" : "error"}`}>{health?.ok ? "Backend activo" : "Backend no disponible"}</span>
-          <span className="pill neutral">{`${authUser.displayName} (${authUser.roles.join(", ")})`}</span>
+          <span className="pill neutral" style={{ fontSize: "0.72rem" }}>
+            {authUser.displayName} ({authUser.roles.join(", ")})
+          </span>
+          <button type="button" className="ghost" onClick={() => setFxDrawerOpen(true)}
+            title="Conversor de divisas" style={{ fontSize: "0.82rem" }}>
+            ⊗ FX
+          </button>
+          <AlertsPanel
+            alerts={alertsHook.alerts}
+            unreadCount={alertsHook.unreadCount}
+            canRun={can("users:manage")}
+            onReload={alertsHook.reload}
+            onError={handleError}
+          />
           <button type="button" className="ghost" onClick={() => void logout()}>
             Cerrar sesión
           </button>
         </div>
       </header>
 
-      <nav className="tabs">
-        {tabs.map((tab) => (
-          <button key={tab.id} type="button" className={activeTab === tab.id ? "tab active" : "tab"} onClick={() => setActiveTab(tab.id)}>
-            {tab.label}
+      {/* FX Drawer */}
+      <FxDrawer open={fxDrawerOpen} onClose={() => setFxDrawerOpen(false)} fxConfigs={fxHook.fxConfigs} />
+
+      {/* Body */}
+      <div className="app-body">
+        {/* Sidebar */}
+        <nav className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`} aria-label="Navegación principal">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            aria-label={sidebarCollapsed ? "Expandir menú" : "Colapsar menú"}
+            title={sidebarCollapsed ? "Expandir" : "Colapsar"}
+          >
+            {sidebarCollapsed ? "→" : "←"}
           </button>
-        ))}
-      </nav>
 
-      {error && <p className="error-banner">{error}</p>}
-      {loading && <p className="loading">Cargando datos...</p>}
-
-      {!loading && activeTab === "dashboard" && (
-        <section className="grid">
-          <article className="card">
-            <h3>Filtros del tablero</h3>
-            <div className="form-grid filters-grid">
-              <select
-                value={statsFilters.company}
-                onChange={(event) => setStatsFilters((prev) => ({ ...prev, company: event.target.value, projectId: "" }))}
-              >
-                <option value="">Todas las empresas</option>
-                {companies.map((company) => (
-                  <option key={company} value={company}>{company}</option>
-                ))}
-              </select>
-              <select
-                value={statsFilters.projectId}
-                onChange={(event) => setStatsFilters((prev) => ({ ...prev, projectId: event.target.value }))}
-              >
-                <option value="">Todos los proyectos</option>
-                {dashboardProjects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={statsFilters.from}
-                onChange={(event) => setStatsFilters((prev) => ({ ...prev, from: event.target.value }))}
-              />
-              <input
-                type="date"
-                value={statsFilters.to}
-                onChange={(event) => setStatsFilters((prev) => ({ ...prev, to: event.target.value }))}
-              />
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => setStatsFilters({ company: "", projectId: "", from: "", to: "" })}
-              >
-                Limpiar filtros
-              </button>
+          {visibleGroups.map((group) => (
+            <div className="sidebar-group" key={group.label}>
+              <span className="sidebar-group-label">{group.label}</span>
+              {group.tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`sidebar-tab${activeTab === tab.id ? " active" : ""}`}
+                  onClick={() => { setActiveTab(tab.id); if (tab.id !== "projects") setOpenProjectId(null); }}
+                  title={tab.label}
+                  aria-current={activeTab === tab.id ? "page" : undefined}
+                >
+                  <span className="sidebar-icon" aria-hidden="true">{tab.icon}</span>
+                  <span className="sidebar-label">{tab.label}</span>
+                </button>
+              ))}
             </div>
-          </article>
+          ))}
+        </nav>
 
-          <article className="card">
-            <h3>Conversor de moneda</h3>
-            <div className="form-grid converter-grid">
-              <select
-                value={currencyConverter.baseCurrency}
-                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, baseCurrency: event.target.value }))}
-              >
-                {currencyOptions.map((currency) => (
-                  <option key={`base-${currency}`} value={currency}>{`Moneda base: ${currency}`}</option>
-                ))}
-              </select>
-              <select
-                value={currencyConverter.targetCurrency}
-                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, targetCurrency: event.target.value }))}
-              >
-                {currencyOptions.map((currency) => (
-                  <option key={`target-${currency}`} value={currency}>{`Moneda destino: ${currency}`}</option>
-                ))}
-              </select>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={currencyConverter.amount}
-                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, amount: event.target.value }))}
-                placeholder="Cantidad"
+        {/* Main content */}
+        <main className="main-content">
+          {error && <p className="error-banner">{error}</p>}
+          {loading && <p className="loading">Cargando datos…</p>}
+
+          {!loading && activeTab === "dashboard" && (
+            <DashboardTab
+              projects={projectsHook.projects}
+              consultants={consultantsHook.consultants}
+              timeEntries={timeEntriesHook.timeEntries}
+              expenses={expensesHook.expenses}
+              forecasts={forecastsHook.forecasts}
+              fxConfigs={fxHook.fxConfigs}
+              initialStats={statsHook.stats}
+              initialBaseCurrency="USD"
+              onError={handleError}
+              onDrillTo={drillTo}
+            />
+          )}
+
+          {!loading && activeTab === "portfolio" && (
+            <PortfolioTab canWrite={can("projects:write")} onOpenProject={openProject} />
+          )}
+
+          {!loading && activeTab === "projects" && (
+            openProjectId ? (
+              <ProjectDetailTab
+                projectId={openProjectId}
+                canWrite={can("projects:write")}
+                onBack={() => setOpenProjectId(null)}
+                onError={handleError}
               />
-              <input
-                type="number"
-                min="0"
-                step="0.0001"
-                value={currencyConverter.rate}
-                onChange={(event) => setCurrencyConverter((prev) => ({ ...prev, rate: event.target.value }))}
-                placeholder={`Tasa ${currencyConverter.baseCurrency} -> ${currencyConverter.targetCurrency}`}
+            ) : (
+              <ProjectsTab
+                projects={projectsHook.projects}
+                loading={projectsHook.loading}
+                canWrite={can("projects:write")}
+                onReload={projectsHook.reload}
+                onError={handleError}
+                statsProjects={statsHook.stats?.projects}
+                onOpenProject={setOpenProjectId}
               />
-            </div>
-            <p className="fx-note">Esta conversión solo aplica para la sesión actual.</p>
-            <p className="converter-result">
-              {convertedAmount === null
-                ? "Define una tasa mayor a 0 para ver el resultado"
-                : `${currencyConverter.baseCurrency} ${formatPlainMoney(numberish(currencyConverter.amount))} = ${currencyConverter.targetCurrency} ${formatPlainMoney(convertedAmount)}`}
-            </p>
-          </article>
+            )
+          )}
 
-          <section className="grid dashboard-grid">
-            <article className="card kpi"><h3>Presupuesto total</h3><p>{money(dashboardTotals.budget || stats?.totals.budget || 0)}</p></article>
-            <article className="card kpi"><h3>Gasto total</h3><p>{money(dashboardTotals.spent || stats?.totals.spent || 0)}</p></article>
-            <article className="card kpi"><h3>Horas totales</h3><p>{(dashboardTotals.totalHours || stats?.totals.totalHours || 0).toFixed(2)}</p></article>
-            <article className="card kpi"><h3>Horas aprobadas</h3><p>{(dashboardTotals.approvedHours || stats?.totals.approvedHours || 0).toFixed(2)}</p></article>
-          </section>
+          {!loading && activeTab === "consultants" && (
+            <ConsultantsTab
+              consultants={consultantsHook.consultants}
+              loading={consultantsHook.loading}
+              canWrite={can("consultants:write")}
+              onReload={consultantsHook.reload}
+              onError={handleError}
+            />
+          )}
 
-          <article className="card">
-            <h3>Resumen por proyecto</h3>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Empresa</th>
-                    <th>Proyecto</th>
-                    <th>Presupuesto</th>
-                    <th>Gasto real</th>
-                    <th>Disponible</th>
-                    <th>Proyección costo</th>
-                    <th>Total proyectado</th>
-                    <th>Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dashboardProjectSummary.map((row) => {
-                    const tone = row.projectedPct > 100 ? "error" : row.projectedPct > 90 ? "warn" : "ok";
-                    const statusLabel = row.projectedPct > 100 ? "Se pasa" : row.projectedPct > 90 ? "Riesgo" : "OK";
+          {!loading && activeTab === "timeEntries" && (
+            <TimeEntriesTab
+              timeEntries={timeEntriesHook.timeEntries}
+              projects={projectsHook.projects}
+              consultants={consultantsHook.consultants}
+              loading={timeEntriesHook.loading}
+              canWrite={can("time:write")}
+              canReview={can("time:review")}
+              reviewerName={authUser.displayName}
+              onReload={timeEntriesHook.reload}
+              onError={handleError}
+            />
+          )}
 
-                    return (
-                      <tr key={row.project.id}>
-                        <td>{row.project.company}</td>
-                        <td>{row.project.name}</td>
-                        <td>{money(numberish(row.project.budget), row.project.currency)}</td>
-                        <td>{money(row.spent, row.project.currency)}</td>
-                        <td>{money(row.remaining, row.project.currency)}</td>
-                        <td>{money(row.projectedCost, row.project.currency)}</td>
-                        <td>{`${money(row.projectedTotal, row.project.currency)} (${row.projectedPct.toFixed(1)}%)`}</td>
-                        <td><span className={`pill ${tone}`}>{statusLabel}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </article>
+          {!loading && activeTab === "expenses" && (
+            <ExpensesTab
+              expenses={expensesHook.expenses}
+              projects={projectsHook.projects}
+              forecasts={forecastsHook.forecasts}
+              loading={expensesHook.loading}
+              canWrite={can("expenses:write")}
+              onReload={expensesHook.reload}
+              onError={handleError}
+              fxConfigs={fxHook.fxConfigs}
+              baseCurrency="USD"
+            />
+          )}
 
-          <section className="grid two-col">
-            <article className="card">
-              <h3>Horas aprobadas por consultor</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Consultor</th>
-                      <th>Total horas</th>
-                      <th>Detalle por proyecto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboardHoursByConsultant.map((row) => (
-                      <tr key={row.consultant}>
-                        <td>{row.consultant}</td>
-                        <td>{row.total.toFixed(2)}</td>
-                        <td>
-                          <div className="tag-list">
-                            {Array.from(row.byProject.entries()).map(([projectId, hours]) => {
-                              const projectName = projects.find((project) => project.id === projectId)?.name || "Proyecto";
-                              return <span key={projectId} className="pill neutral">{`${projectName}: ${hours.toFixed(2)}h`}</span>;
-                            })}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
+          {!loading && activeTab === "forecasts" && (
+            <ForecastsTab
+              forecasts={forecastsHook.forecasts}
+              projects={projectsHook.projects}
+              consultants={consultantsHook.consultants}
+              loading={forecastsHook.loading}
+              canWrite={can("forecasts:write")}
+              onReload={forecastsHook.reload}
+              onError={handleError}
+            />
+          )}
 
-            <article className="card">
-              <h3>Proyección por consultor</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Consultor</th>
-                      <th>Horas proyectadas</th>
-                      <th>Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboardForecastByConsultant.map((row) => (
-                      <tr key={row.consultant}>
-                        <td>{row.consultant}</td>
-                        <td>{row.totalHours.toFixed(2)}</td>
-                        <td>
-                          <div className="tag-list">
-                            {row.items.map((item) => (
-                              <span key={item.id} className="pill neutral">{`${item.period}: ${numberish(item.hoursProjected).toFixed(2)}h`}</span>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </section>
-        </section>
-      )}
+          {!loading && activeTab === "revenue" && (
+            <RevenueTab
+              revenueEntries={revenueHook.revenueEntries}
+              projects={projectsHook.projects}
+              loading={revenueHook.loading}
+              canWrite={can("revenue:write")}
+              onReload={revenueHook.reload}
+              onError={handleError}
+            />
+          )}
 
-      {!loading && activeTab === "projects" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Nuevo proyecto</h3>
-            {can("projects:write") && (
-              <form onSubmit={submitProject} className="form-grid">
-                <input placeholder="Nombre" value={projectForm.name} onChange={(event) => setProjectForm((prev) => ({ ...prev, name: event.target.value }))} required />
-                <input placeholder="Empresa" value={projectForm.company} onChange={(event) => setProjectForm((prev) => ({ ...prev, company: event.target.value }))} required />
-                <input placeholder="País" value={projectForm.country} onChange={(event) => setProjectForm((prev) => ({ ...prev, country: event.target.value }))} required />
-                <select value={projectForm.currency} onChange={(event) => setProjectForm((prev) => ({ ...prev, currency: event.target.value }))} required>
-                  {currencyOptions.map((currency) => (
-                    <option key={currency} value={currency}>{currency}</option>
-                  ))}
-                </select>
-                <input type="number" placeholder="Presupuesto" value={projectForm.budget} onChange={(event) => setProjectForm((prev) => ({ ...prev, budget: event.target.value }))} required />
-                <input type="date" value={projectForm.startDate} onChange={(event) => setProjectForm((prev) => ({ ...prev, startDate: event.target.value }))} required />
-                <input type="date" value={projectForm.endDate} onChange={(event) => setProjectForm((prev) => ({ ...prev, endDate: event.target.value }))} required />
-                <textarea placeholder="Descripción" value={projectForm.description} onChange={(event) => setProjectForm((prev) => ({ ...prev, description: event.target.value }))} />
-                <button type="submit">Crear proyecto</button>
-              </form>
-            )}
-          </article>
-          <article className="card"><h3>Listado de proyectos</h3><input placeholder="Filtrar por proyecto o empresa" value={projectSearch} onChange={(event) => setProjectSearch(event.target.value)} /><div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Empresa</th><th>Moneda</th><th>Presupuesto</th><th>Acciones</th></tr></thead><tbody>{filteredProjects.map((project) => (<tr key={project.id}><td>{project.name}</td><td>{project.company}</td><td>{project.currency}</td><td>{money(numberish(project.budget), project.currency)}</td><td>{can("projects:write") && (<div className="inline-actions"><button type="button" onClick={() => void editProject(project)}>Editar</button><button type="button" className="ghost" onClick={() => void removeProject(project)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
+          {!loading && activeTab === "capacity" && (
+            <CapacityTab
+              projects={projectsHook.projects}
+              consultants={consultantsHook.consultants}
+              canWrite={can("assignments:write")}
+              onError={handleError}
+            />
+          )}
 
-      {!loading && activeTab === "consultants" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Nuevo consultor</h3>
-            {can("consultants:write") && (
-              <form onSubmit={submitConsultant} className="form-grid">
-                <input placeholder="Nombre completo" value={consultantForm.fullName} onChange={(event) => setConsultantForm((prev) => ({ ...prev, fullName: event.target.value }))} required />
-                <input placeholder="Correo" value={consultantForm.email} onChange={(event) => setConsultantForm((prev) => ({ ...prev, email: event.target.value }))} />
-                <select value={consultantForm.role} onChange={(event) => setConsultantForm((prev) => ({ ...prev, role: event.target.value }))} required>
-                  {consultantRoleOptions.map((role) => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
-                <select value={consultantForm.rateCurrency} onChange={(event) => setConsultantForm((prev) => ({ ...prev, rateCurrency: event.target.value }))}>
-                  {currencyOptions.map((currency) => (
-                    <option key={currency} value={currency}>{currency}</option>
-                  ))}
-                </select>
-                <input type="number" placeholder={`Tarifa por hora (${consultantForm.rateCurrency})`} value={consultantForm.hourlyRate} onChange={(event) => setConsultantForm((prev) => ({ ...prev, hourlyRate: event.target.value }))} />
-                <label className="check"><input type="checkbox" checked={consultantForm.active} onChange={(event) => setConsultantForm((prev) => ({ ...prev, active: event.target.checked }))} />Activo</label>
-                <button type="submit">Crear consultor</button>
-              </form>
-            )}
-          </article>
-          <article className="card"><h3>Listado de consultores</h3><div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Rol</th><th>Tarifa</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{consultants.map((consultant) => (<tr key={consultant.id}><td>{consultant.fullName}</td><td>{consultant.role}</td><td>{money(numberish(consultant.hourlyRate || "0"), "COP")}</td><td>{consultant.active ? "Activo" : "Inactivo"}</td><td>{can("consultants:write") && (<div className="inline-actions"><button type="button" onClick={() => void editConsultant(consultant)}>Editar</button><button type="button" onClick={() => void toggleConsultantActive(consultant)}>{consultant.active ? "Desactivar" : "Activar"}</button><button type="button" className="ghost" onClick={() => void removeConsultant(consultant)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
+          {!loading && activeTab === "fx" && (
+            <FxTab
+              fxConfigs={fxHook.fxConfigs}
+              loading={fxHook.loading}
+              canWrite={can("fx:write") || can("users:manage")}
+              onReload={fxHook.reload}
+              onError={handleError}
+            />
+          )}
 
-      {!loading && activeTab === "timeEntries" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Registrar horas</h3>
-            {can("time:write") && (
-              <form onSubmit={submitTimeEntry} className="form-grid">
-                <select value={timeForm.projectId} onChange={(event) => setTimeForm((prev) => ({ ...prev, projectId: event.target.value }))} required><option value="">Proyecto</option>{projects.map((project) => (<option key={project.id} value={project.id}>{project.name}</option>))}</select>
-                <select value={timeForm.consultantId} onChange={(event) => setTimeForm((prev) => ({ ...prev, consultantId: event.target.value }))} required><option value="">Consultor</option>{consultants.map((consultant) => (<option key={consultant.id} value={consultant.id}>{consultant.fullName}</option>))}</select>
-                <input type="date" value={timeForm.workDate} onChange={(event) => setTimeForm((prev) => ({ ...prev, workDate: event.target.value }))} required />
-                <input type="number" step="0.25" placeholder="Horas" value={timeForm.hours} onChange={(event) => setTimeForm((prev) => ({ ...prev, hours: event.target.value }))} required />
-                <textarea placeholder="Nota" value={timeForm.note} onChange={(event) => setTimeForm((prev) => ({ ...prev, note: event.target.value }))} />
-                <button type="submit">Registrar</button>
-              </form>
-            )}
-          </article>
-          <article className="card"><h3>Flujo de aprobación</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Consultor</th><th>Horas</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{timeEntries.map((entry) => (<tr key={entry.id}><td>{entry.project.name}</td><td>{entry.consultant.fullName}</td><td>{numberish(entry.hours).toFixed(2)}</td><td>{entry.status}</td><td>{entry.status === "PENDING" && can("time:review") && (<div className="inline-actions"><button type="button" onClick={() => void reviewTimeEntry(entry.id, "approve")}>Aprobar</button><button type="button" className="ghost" onClick={() => void reviewTimeEntry(entry.id, "reject")}>Rechazar</button></div>)}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
+          {!loading && activeTab === "admin" && (
+            <AdminTab
+              adminUsers={adminHook.adminUsers}
+              loading={adminHook.loading}
+              onReload={adminHook.reload}
+              onError={handleError}
+            />
+          )}
 
-      {!loading && activeTab === "expenses" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Registrar gasto</h3>
-            {can("expenses:write") && (
-              <form onSubmit={submitExpense} className="form-grid">
-                <select value={expenseForm.projectId} onChange={(event) => setExpenseForm((prev) => ({ ...prev, projectId: event.target.value }))} required><option value="">Proyecto</option>{projects.map((project) => (<option key={project.id} value={project.id}>{project.name}</option>))}</select>
-                <input type="date" value={expenseForm.expenseDate} onChange={(event) => setExpenseForm((prev) => ({ ...prev, expenseDate: event.target.value }))} required />
-                <select value={expenseForm.category} onChange={(event) => setExpenseForm((prev) => ({ ...prev, category: event.target.value }))} required>
-                  {expenseCategoryOptions.map((category) => (
-                    <option key={category} value={category}>{category}</option>
-                  ))}
-                </select>
-                <input type="number" step="0.01" placeholder="Valor" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} required />
-                <select value={expenseForm.currency} onChange={(event) => setExpenseForm((prev) => ({ ...prev, currency: event.target.value }))} required>
-                  {currencyOptions.map((currency) => (
-                    <option key={currency} value={currency}>{currency}</option>
-                  ))}
-                </select>
-                <textarea placeholder="Descripción" value={expenseForm.description} onChange={(event) => setExpenseForm((prev) => ({ ...prev, description: event.target.value }))} />
-                <button type="submit">Registrar gasto</button>
-              </form>
-            )}
-          </article>
-          <article className="card"><h3>Listado de gastos</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Categoría</th><th>Monto</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>{expenses.map((expense) => (<tr key={expense.id}><td>{expense.project.name}</td><td>{expense.category}</td><td>{money(numberish(expense.amount), expense.currency)}</td><td>{new Date(expense.expenseDate).toLocaleDateString()}</td><td>{can("expenses:write") && (<div className="inline-actions"><button type="button" onClick={() => void editExpense(expense)}>Editar</button><button type="button" className="ghost" onClick={() => void removeExpense(expense)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
+          {!loading && activeTab === "audit" && <AuditTab onError={handleError} />}
+        </main>
+      </div>
 
-      {!loading && activeTab === "forecasts" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Nueva proyección</h3>
-            {can("forecasts:write") && (
-              <form onSubmit={submitForecast} className="form-grid">
-                <select value={forecastForm.projectId} onChange={(event) => setForecastForm((prev) => ({ ...prev, projectId: event.target.value }))} required><option value="">Proyecto</option>{projects.map((project) => (<option key={project.id} value={project.id}>{project.name}</option>))}</select>
-                <select value={forecastForm.consultantId} onChange={(event) => setForecastForm((prev) => ({ ...prev, consultantId: event.target.value }))} required><option value="">Consultor</option>{consultants.map((consultant) => (<option key={consultant.id} value={consultant.id}>{consultant.fullName}</option>))}</select>
-                <input type="number" min="2020" max="2100" placeholder="Año" value={forecastForm.periodYear} onChange={(event) => setForecastForm((prev) => ({ ...prev, periodYear: event.target.value }))} required />
-                <select value={forecastForm.periodQuarterStart} onChange={(event) => setForecastForm((prev) => ({ ...prev, periodQuarterStart: event.target.value }))} required>
-                  {quarterOptions.map((quarter) => (
-                    <option key={`start-${quarter}`} value={quarter}>{`Desde ${quarter}`}</option>
-                  ))}
-                </select>
-                <select value={forecastForm.periodQuarterEnd} onChange={(event) => setForecastForm((prev) => ({ ...prev, periodQuarterEnd: event.target.value }))} required>
-                  {quarterOptions.map((quarter) => (
-                    <option key={`end-${quarter}`} value={quarter}>{`Hasta ${quarter}`}</option>
-                  ))}
-                </select>
-                <input type="number" step="0.5" placeholder="Horas proyectadas" value={forecastForm.hoursProjected} onChange={(event) => setForecastForm((prev) => ({ ...prev, hoursProjected: event.target.value }))} required />
-                <input type="number" step="0.01" placeholder="Tarifa/hora" value={forecastForm.hourlyRate} onChange={(event) => setForecastForm((prev) => ({ ...prev, hourlyRate: event.target.value }))} />
-                <textarea placeholder="Nota" value={forecastForm.note} onChange={(event) => setForecastForm((prev) => ({ ...prev, note: event.target.value }))} />
-                <button type="submit">Guardar proyección</button>
-              </form>
-            )}
-          </article>
-          <article className="card"><h3>Listado de proyecciones</h3><div className="table-wrap"><table><thead><tr><th>Proyecto</th><th>Consultor</th><th>Periodo</th><th>Horas</th><th>Costo</th><th>Acciones</th></tr></thead><tbody>{forecasts.map((forecast) => (<tr key={forecast.id}><td>{forecast.project.name}</td><td>{forecast.consultant.fullName}</td><td>{forecast.period}</td><td>{numberish(forecast.hoursProjected).toFixed(2)}</td><td>{money(forecast.projectedCost || 0, forecast.project.currency)}</td><td>{can("forecasts:write") && (<div className="inline-actions"><button type="button" onClick={() => void editForecast(forecast)}>Editar</button><button type="button" className="ghost" onClick={() => void removeForecast(forecast)}>Eliminar</button></div>)}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
-
-      {!loading && activeTab === "admin" && (
-        <section className="grid two-col">
-          <article className="card">
-            <h3>Crear usuario</h3>
-            <form onSubmit={submitAdminUser} className="form-grid">
-              <input placeholder="Correo" value={adminUserForm.email} onChange={(event) => setAdminUserForm((prev) => ({ ...prev, email: event.target.value }))} required />
-              <input placeholder="Nombre" value={adminUserForm.displayName} onChange={(event) => setAdminUserForm((prev) => ({ ...prev, displayName: event.target.value }))} required />
-              <input placeholder="Microsoft OID (opcional)" value={adminUserForm.microsoftOid} onChange={(event) => setAdminUserForm((prev) => ({ ...prev, microsoftOid: event.target.value }))} />
-              <select value={adminUserForm.role} onChange={(event) => setAdminUserForm((prev) => ({ ...prev, role: event.target.value as AppRole }))}>
-                {roleOptions.map((role) => (
-                  <option key={role} value={role}>{role}</option>
-                ))}
-              </select>
-              <label className="check"><input type="checkbox" checked={adminUserForm.active} onChange={(event) => setAdminUserForm((prev) => ({ ...prev, active: event.target.checked }))} />Activo</label>
-              <button type="submit">Crear usuario</button>
-            </form>
-          </article>
-          <article className="card"><h3>Usuarios registrados</h3><div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Correo</th><th>Roles</th><th>Estado</th></tr></thead><tbody>{adminUsers.map((user) => (<tr key={user.id}><td>{user.displayName}</td><td>{user.email}</td><td>{user.roles.join(", ")}</td><td>{user.active ? "Activo" : "Inactivo"}</td></tr>))}</tbody></table></div></article>
-        </section>
-      )}
-
-      {editModal && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <div className="modal-header">
-              <h3>
-                {editModal.type === "project" && "Editar proyecto"}
-                {editModal.type === "consultant" && "Editar consultor"}
-                {editModal.type === "expense" && "Editar gasto"}
-                {editModal.type === "forecast" && "Editar proyección"}
-              </h3>
-              <button type="button" className="ghost" onClick={() => setEditModal(null)}>Cerrar</button>
-            </div>
-
-            <form className="form-grid" onSubmit={(event) => void submitEditModal(event)}>
-              {editModal.type === "project" && (
-                <>
-                  <input value={editModal.form.name} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, name: event.target.value } } : prev)} placeholder="Nombre" required />
-                  <input value={editModal.form.company} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, company: event.target.value } } : prev)} placeholder="Empresa" required />
-                  <input value={editModal.form.country} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, country: event.target.value } } : prev)} placeholder="País" required />
-                  <select value={editModal.form.currency} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, currency: event.target.value } } : prev)} required>
-                    {currencyOptions.map((currency) => (
-                      <option key={`project-edit-${currency}`} value={currency}>{currency}</option>
-                    ))}
-                  </select>
-                  <input type="number" value={editModal.form.budget} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, budget: event.target.value } } : prev)} placeholder="Presupuesto" required />
-                  <input type="date" value={editModal.form.startDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, startDate: event.target.value } } : prev)} required />
-                  <input type="date" value={editModal.form.endDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, endDate: event.target.value } } : prev)} required />
-                  <textarea value={editModal.form.description} onChange={(event) => setEditModal((prev) => prev && prev.type === "project" ? { ...prev, form: { ...prev.form, description: event.target.value } } : prev)} placeholder="Descripción" />
-                </>
-              )}
-
-              {editModal.type === "consultant" && (
-                <>
-                  <input value={editModal.form.fullName} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, fullName: event.target.value } } : prev)} placeholder="Nombre completo" required />
-                  <input value={editModal.form.email} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, email: event.target.value } } : prev)} placeholder="Correo" />
-                  <select value={editModal.form.role} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, role: event.target.value } } : prev)} required>
-                    {consultantRoleOptions.map((role) => (
-                      <option key={`consultant-edit-${role}`} value={role}>{role}</option>
-                    ))}
-                  </select>
-                  <input type="number" value={editModal.form.hourlyRate} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, hourlyRate: event.target.value } } : prev)} placeholder="Tarifa por hora" />
-                  <label className="check"><input type="checkbox" checked={editModal.form.active} onChange={(event) => setEditModal((prev) => prev && prev.type === "consultant" ? { ...prev, form: { ...prev.form, active: event.target.checked } } : prev)} />Activo</label>
-                </>
-              )}
-
-              {editModal.type === "expense" && (
-                <>
-                  <select value={editModal.form.projectId} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, projectId: event.target.value } } : prev)} required>
-                    {projects.map((project) => (
-                      <option key={`expense-edit-project-${project.id}`} value={project.id}>{project.name}</option>
-                    ))}
-                  </select>
-                  <input type="date" value={editModal.form.expenseDate} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, expenseDate: event.target.value } } : prev)} required />
-                  <select value={editModal.form.category} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, category: event.target.value } } : prev)} required>
-                    {expenseCategoryOptions.map((category) => (
-                      <option key={`expense-edit-category-${category}`} value={category}>{category}</option>
-                    ))}
-                  </select>
-                  <input type="number" value={editModal.form.amount} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, amount: event.target.value } } : prev)} required />
-                  <select value={editModal.form.currency} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, currency: event.target.value } } : prev)} required>
-                    {currencyOptions.map((currency) => (
-                      <option key={`expense-edit-currency-${currency}`} value={currency}>{currency}</option>
-                    ))}
-                  </select>
-                  <textarea value={editModal.form.description} onChange={(event) => setEditModal((prev) => prev && prev.type === "expense" ? { ...prev, form: { ...prev.form, description: event.target.value } } : prev)} placeholder="Descripción" />
-                </>
-              )}
-
-              {editModal.type === "forecast" && (
-                <>
-                  <select value={editModal.form.projectId} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, projectId: event.target.value } } : prev)} required>
-                    {projects.map((project) => (
-                      <option key={`forecast-edit-project-${project.id}`} value={project.id}>{project.name}</option>
-                    ))}
-                  </select>
-                  <select value={editModal.form.consultantId} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, consultantId: event.target.value } } : prev)} required>
-                    {consultants.map((consultant) => (
-                      <option key={`forecast-edit-consultant-${consultant.id}`} value={consultant.id}>{consultant.fullName}</option>
-                    ))}
-                  </select>
-                  <input value={editModal.form.period} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, period: event.target.value } } : prev)} required />
-                  <input type="number" value={editModal.form.hoursProjected} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, hoursProjected: event.target.value } } : prev)} required />
-                  <input type="number" value={editModal.form.hourlyRate} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, hourlyRate: event.target.value } } : prev)} placeholder="Tarifa/hora" />
-                  <textarea value={editModal.form.note} onChange={(event) => setEditModal((prev) => prev && prev.type === "forecast" ? { ...prev, form: { ...prev.form, note: event.target.value } } : prev)} placeholder="Nota" />
-                </>
-              )}
-
-              <div className="modal-actions">
-                <button type="submit">Guardar cambios</button>
-                <button type="button" className="ghost" onClick={() => setEditModal(null)}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </main>
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+    </div>
   );
 }
 

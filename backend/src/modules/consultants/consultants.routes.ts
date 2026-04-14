@@ -9,6 +9,9 @@ const consultantPayloadSchema = z.object({
   email: z.string().trim().email().optional().or(z.literal("")),
   role: z.string().trim().min(1),
   hourlyRate: z.coerce.number().nonnegative().optional(),
+  rateCurrency: z.string().trim().toUpperCase().length(3).default("USD"),
+  country: z.string().trim().optional(),
+  costPerMonth: z.coerce.number().nonnegative().optional(),
   active: z.coerce.boolean().default(true),
 });
 
@@ -43,6 +46,9 @@ export async function consultantsRoutes(app: FastifyInstance) {
         email: payload.email || null,
         role: payload.role,
         hourlyRate: payload.hourlyRate,
+        rateCurrency: payload.rateCurrency,
+        country: payload.country,
+        costPerMonth: payload.costPerMonth,
         active: payload.active,
       },
     });
@@ -72,6 +78,9 @@ export async function consultantsRoutes(app: FastifyInstance) {
         email: payload.email || null,
         role: payload.role,
         hourlyRate: payload.hourlyRate,
+        rateCurrency: payload.rateCurrency,
+        country: payload.country,
+        costPerMonth: payload.costPerMonth,
         active: payload.active,
       },
     });
