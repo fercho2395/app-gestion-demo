@@ -62,17 +62,27 @@ export function ConsultantsTab({
   const [deleteTarget, setDeleteTarget] = useState<Consultant | null>(null);
   const [fxRates, setFxRates] = useState<Record<string, number>>({});
   const [fxLoading, setFxLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
+  function fetchFxRates() {
     setFxLoading(true);
-    fetch("https://open.er-api.com/v6/latest/USD")
+    return fetch("https://open.er-api.com/v6/latest/USD")
       .then((res) => res.json())
-      .then((data: { rates: Record<string, number> }) => {
-        setFxRates(data.rates);
-      })
-      .catch(() => { /* fxRates queda vacío, la columna mostrará "—" */ })
+      .then((data: { rates: Record<string, number> }) => { setFxRates(data.rates); })
+      .catch(() => {})
       .finally(() => setFxLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { void fetchFxRates(); }, []);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await Promise.all([onReload(), fetchFxRates()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function toUSD(amount: number, currency: string): string {
     if (currency === "USD") return money(amount, "USD");
@@ -206,6 +216,17 @@ export function ConsultantsTab({
             <p className="loading">Cargando...</p>
           ) : (
             <div className="table-wrap">
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => void handleRefresh()}
+                  disabled={refreshing}
+                  style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem" }}
+                >
+                  {refreshing ? "Actualizando…" : "↺ Actualizar"}
+                </button>
+              </div>
               <table>
                 <thead>
                   <tr>
