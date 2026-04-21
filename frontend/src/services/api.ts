@@ -223,10 +223,10 @@ async function request<T>(path: string, method: HttpMethod = "GET", body?: unkno
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
-      "Content-Type": "application/json",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
   if (!response.ok) {
